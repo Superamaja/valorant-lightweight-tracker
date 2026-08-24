@@ -30,8 +30,29 @@ The user's main gripe with vRY's TUI is text ranks. Every place an image exists 
 ## Behavior
 
 - Websocket-driven auto-refresh on game-state change; no manual refresh button.
-- Click a row → copy `name#tag` to clipboard.
-- Normal resizable window for v1. Compact always-on-top overlay mode is a possible later feature — don't build, don't block.
+- Click a player's name → open their tracker.gg profile in the default browser: `https://tracker.gg/valorant/profile/riot/{name}%23{tag}/overview` (Tauri opener plugin). Disabled for incognito/hidden players. Secondary action (right-click or small icon): copy `name#tag`.
+- tracker.gg is link-out ONLY — their API has no Valorant support (exclusive Riot deal) and scraping violates their ToS. All stats stay self-calculated from Riot endpoints.
+- Normal resizable window. Overlay mode is REJECTED (user decision) — this stays a separate app window permanently.
+
+## Per-player data wishlist (agreed 2026-08-24)
+
+Tier 1 = core pipeline (backend phase 1, in progress). Tier 2 = needs additional endpoints (backend phase 2). All confirmed possible — vRY or the documented API surface provides each.
+
+| Column | Tier | Source |
+|---|---|---|
+| Party grouping | 1 | presence `partyId` — group players sharing an id, color-coded dots |
+| Agent (portrait) | 1 | coregame `CharacterID` + valorant-api.com icon |
+| Name#tag | 1 | name-service (respect incognito/hidden flag) |
+| Current rank (icon) + RR | 1 | MMR endpoint |
+| Peak rank (icon) | 1 | MMR seasonal data (tier-shift handling per backend spec) |
+| Account level | 1 | `PlayerIdentity.AccountLevel` (respect hide flag) |
+| HS% | 2 | pd match-history + match-details: headshot/total hit counts over recent matches |
+| WR (win rate) | 2 | pd competitiveupdates / match-history: wins over recent comp matches |
+| RR delta per previous game | 2 | pd competitiveupdates: `RankedRatingEarned` per match |
+| Last 5 games W/L | 2 | same competitiveupdates data, rendered as 5 W/L pips |
+| Vandal skin (maybe Phantom too) | 2 | coregame loadouts endpoint + valorant-api.com skin name/icon |
+
+Tier 2 caveats: per-player history fetches multiply request count (10 players x N matches) — must be throttled/cached to avoid Riot rate limits (vRY hits this too); exact per-field availability to be confirmed against the live API once Valorant is running on this machine.
 
 ## Open items
 

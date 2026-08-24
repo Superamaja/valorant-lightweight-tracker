@@ -28,7 +28,19 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
 
 1. ~~User picks stack (Tauri vs Python).~~ Done — Tauri 2.
 2. ~~Scaffold project.~~ Done — see Repo layout below.
-3. Implement lockfile + local API auth, then presence → player list → ranks pipeline, cross-checking values against vRY.
+3. ~~Implement lockfile + local API auth, then presence → player list → ranks pipeline.~~
+   **Done — Rust backend implemented in `src-tauri/src/riot/` + `app_state.rs`.** All parsing
+   is pure and unit-tested (63 tests). Exposes two Tauri commands (`start_tracker`,
+   `get_tracker_state`) and one event (`tracker-state`). The exact TS-facing contract is in
+   `docs/ipc-contract.md`. `cargo check` / `cargo test` / `cargo clippy -- -D warnings` all
+   pass; `pnpm build` still passes (frontend untouched).
+4. **Next: UI.** Per the `ui-spec.md` process gate, the UI is built by a separate agent the
+   **user** runs. That agent builds against `docs/ipc-contract.md` (event + command shapes)
+   and touches only `src/` (React/Tailwind). Do not implement UI here.
+5. **Open — needs live game to verify** (backend could not integration-test; Valorant not
+   running on this machine): `latam`/`br` → `na` shard mapping; that the *last*
+   `competitivetiers` table entry is the current one; and that the presence nested-vs-flat
+   dual paths both fire in the wild. See the new "Implementation notes" in `docs/backend-spec.md`.
 
 ## Repo layout
 
@@ -46,12 +58,29 @@ Scaffolded with `pnpm create tauri-app` (react-ts template), files at the repo r
 │   ├── main.tsx           # React entry, imports index.css
 │   ├── App.tsx            # Placeholder page (dark bg, title, empty player-table region)
 │   └── index.css          # Tailwind v4 entry (`@import "tailwindcss";`)
-└── src-tauri/             # Rust / Tauri 2 backend (minimal default scaffold)
-    ├── Cargo.toml
+└── src-tauri/             # Rust / Tauri 2 backend (Riot pipeline implemented)
+    ├── Cargo.toml         # + reqwest, tokio, tokio-tungstenite, native-tls, base64, thiserror
     ├── tauri.conf.json    # productName, identifier com.connor.valorant-tracker, 1000x700 window
     └── src/
         ├── main.rs        # Calls valorant_lightweight_tracker_lib::run()
-        └── lib.rs         # Default `greet` command only; no Riot logic yet
+        ├── lib.rs         # Tauri builder: manages TrackerState, commands + `tracker-state` event
+        ├── app_state.rs   # Orchestration state machine (connect/reconnect, emit snapshots)
+        └── riot/          # All Riot-API logic (pure parsers + IO clients)
+            ├── mod.rs
+            ├── constants.rs   # NUMBER_TO_RANK, before_ascendant_seasons, gamemodes, headers, shard map
+            ├── types.rs       # TrackerSnapshot / PlayerRow / RankInfo … (the frontend-facing shapes)
+            ├── error.rs       # Error taxonomy (game-not-running is NOT an error)
+            ├── lockfile.rs    # find + parse lockfile, basic-auth header
+            ├── local_api.rs   # local HTTPS (self-signed): entitlements, presences, region-locale
+            ├── remote_api.rs  # pd/glz/shared clients: headers, host construction, error mapping
+            ├── websocket.rs   # local wss listener + presence-event parsing
+            ├── presence.rs    # decode private presence (nested + flat), party grouping
+            ├── match_state.rs # pregame/coregame player extraction
+            ├── names.rs       # batch name-service resolution
+            ├── rank.rs        # MMR parse, current/peak rank, before-ascendant tier shift
+            ├── content.rs     # content-service season list (current/previous act)
+            ├── static_data.rs # valorant-api fetch + version-keyed disk cache + lookups
+            └── assemble.rs    # combine everything into display-ready PlayerRows
 ```
 
 Frontend styling uses Tailwind CSS v4 via the Vite plugin (`@tailwindcss/vite`) — no

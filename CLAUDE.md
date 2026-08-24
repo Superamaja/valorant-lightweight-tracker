@@ -11,9 +11,12 @@ Lightweight desktop app showing an in-match player table (ranks, RR, peak rank, 
 - `docs/project-context.md` — decisions made, scope, current status, next steps. **Start here.**
 - `docs/data-sources.md` — where match/player data comes from and reference material.
 - `docs/ui-spec.md` — agreed UI baseline. Contains a process gate: Claude never implements UI or spawns UI subagents — it writes a ready-to-paste agent prompt and the user runs it with their own model.
+- `docs/roadmap.md` — later work (release pipeline: portable single exe via GitHub Actions, no auto-updater yet) and rejected ideas.
+- `docs/maintenance.md` — vRY upstream check procedure + last-checked commit hash. Use when the user asks to "check vRY" / "maintain".
 
 ## Hard rules
 
 - vRY (https://github.com/mdevio/VALORANT-rank-yoinker) is the **reference implementation** for data correctness. When our numbers disagree with vRY, vRY is right until proven otherwise.
 - Do NOT reuse logic from ValoTracker (https://github.com/Londopy/ValoTracker) — user verified its data is wrong.
 - Scope: in-match player table only. Discord RPC is a possible future feature — keep the architecture open to it, but do not build it.
+- After every implementation pass (agent or inline), run a Fable-model code review before the work is considered done. Review targets: correctness vs docs/backend-spec.md, code quality (DRY, SoC, naming), and lightweightness (no unnecessary dependencies, no wasted allocations/requests — this app's whole point is being lightweight).

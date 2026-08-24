@@ -273,9 +273,10 @@ Peak rank act/episode label: `max_rank_season` (a season UUID) is looked up in t
 
 **Win rate**: `NumberOfWinsWithPlacements / NumberOfGames * 100`, rounded to int; `"N/A"` if no games this season. Not required for the v1 in-match table per `ui-spec.md` — skip unless added later.
 
-**Season id source** (content-service, `pd`-adjacent but actually `shared.<region>` host):
+**Season id source** (content-service, `pd`-adjacent but actually `shared.<shard>` host —
+identical to `region` except for `br`/`latam`, which map to shard `na`):
 ```
-GET https://shared.{region}.a.pvp.net/content-service/v3/content
+GET https://shared.{shard}.a.pvp.net/content-service/v3/content
 Authorization: Bearer <accessToken>
 X-Riot-Entitlements-JWT: <token>
 X-Riot-ClientPlatform / X-Riot-ClientVersion / User-Agent   // same headers as pd/glz
@@ -366,3 +367,142 @@ Emit updates to the frontend via Tauri's event system (`app.emit(...)`) on every
 - **Which `competitivetiers` table entry from valorant-api.com is "current"**: vRY never consumes this endpoint (its output is text-only), so there's no reference behavior to copy. The "last array entry = current act's tier table" assumption is standard among other Valorant tools but should be sanity-checked against a live match's rank icon.
 - **Exact wording/availability of the `AccountXP`/other level-related fields**: not investigated — §8 covers only what vRY actually reads (`PlayerIdentity.AccountLevel`), which was sufficient for the ui-spec's "account level" row requirement.
 - **Win-rate and "already played with" history features**: present in vRY but out of scope per `ui-spec.md`/`project-context.md` (v1 = in-match table only); not detailed beyond a pointer to `rank.py`/`stats.py` in case a later milestone wants them.
+
+---
+
+## Implementation notes
+
+Added 2026-08-24 when the Rust backend was implemented (`src-tauri/src/riot/` + `app_state.rs`).
+The pipeline follows this spec; the notes below record deviations, decisions, and items that
+could not be verified because Valorant was not running on the build machine (no live client).
+
+### Decisions / deviations from the spec text
+
+- **Region discovery**: used the recommended `/riotclient/region-locale` local endpoint (not
+  the `ShooterGame.log` scrape). No dependency on the game log at all.
+- **Client version**: `valorant-api.com/v1/version` `riotClientVersion` is used only as the
+  **bootstrap/fallback** value (fetched once per connect, cached with static data). Once
+  connected, `build_snapshot` overrides it with the version read from own presence
+  (`partyPresenceData.partyClientVersion`, dual-path nested/flat) via
+  `RemoteClient::set_client_version`. This is because valorant-api.com can lag the real
+  client — observed live: valorant-api reported `shipping-18` while the running client was
+  `shipping-20` (see Live verification). pd accepted the stale header that day, but on patch
+  days Riot may reject it, so own-presence is authoritative when available.
+- **Shard/host + pbe**: `constants::region_to_shard` / `normalize_region` implement
+  `latam`/`br` → `na` and `pbe` → `na`/`na`. **Unverified against a live br/latam/pbe account.**
+  The `shared` content-service host follows the **shard** (not the region), matching pd/glz —
+  identical to region except `br`/`latam` (shard `na`). (Corrected from an earlier
+  `shared.<region>` that would have hit a nonexistent `shared.br`/`shared.latam` host.)
+- **competitivetiers "current" table**: `static_data::parse_competitive_tiers` takes the
+  **last** entry of the top-level `data` array (the inferred convention). **Unverified against
+  a live rank icon** — flagged for a manual sanity check.
+- **Presence dual-shape**: `presence::extract_info` reads every field from BOTH the nested
+  (`matchPresenceData`/`partyPresenceData`/`playerPresenceData`) and flat locations via a
+  `dual()` helper; `accountLevel`/`partySize` also accept numeric-string values defensively.
+  Unit-tested for both shapes, but only real traffic will confirm which Riot currently serves.
+- **State enum**: the frontend-facing `AppStatus` is exactly the four states requested
+  (`ValorantNotRunning | Menus | Pregame | Ingame`). The spec's "DISCONNECTED / reconnecting"
+  nuance is folded into `ValorantNotRunning` + a human `message` field on the snapshot, rather
+  than a separate enum variant, to keep the UI contract simple. `MENUS` and any *unknown*
+  `sessionLoopState` both render as `Menus` with an empty roster.
+- **Incognito → name hidden**: a player with `PlayerIdentity.Incognito == true` has `name` set
+  to `null` in the row (except your own row), implementing the "don't de-anonymize" rule at the
+  data layer. vRY's raw behaviour still returns the name from name-service; we withhold it in
+  the emitted snapshot so a hidden name can never reach the UI. Adjust if the UI would rather
+  receive the name plus a flag and decide for itself.
+- **Season label parsing** (`content.get_act_episode_from_act_id`, the "peak: Immortal 2 (E5A3)"
+  text): **not implemented** — the UI spec only needs the peak *icon*. `content::previous_season_id`
+  exists (behind `#[allow(dead_code)]`) as a hook if the act-label feature is added later.
+- **Win rate / match-history**: not implemented (out of scope, per the gaps section above).
+- **Static-data cache**: version-keyed JSON files under
+  `%LOCALAPPDATA%\valorant-lightweight-tracker\static-cache\static-<version>.json`. Image PNGs
+  themselves are passed to the UI as plain valorant-api URLs (not downloaded/cached in Rust).
+
+### Review-pass fixes (2026-08-24)
+
+Applied after a Fable review of the first backend cut:
+
+- **Lightweightness — per-match name/MMR cache.** `app_state::MatchCache` keys resolved
+  names + MMR by match id; an in-match presence update (the score changes every round) reuses
+  the cache and does **not** refetch. Invalidated on a new match id or any transition to MENUS.
+  The poke channel is drained (`try_recv` loop) before each rebuild so a burst of presence
+  events collapses into a single snapshot build.
+- **Reconnect handling.** After every websocket drop the listener task injects a synthetic
+  poke so the session re-polls presence (transitions during the outage aren't lost); publishes
+  a "Reconnecting…" not-running snapshot immediately (no stale INGAME table); checks lockfile
+  existence each retry to bail at once when the client is gone; and resets the reconnect
+  backoff after a successful connection.
+- **Token expiry.** `fetch_names`/`fetch_all_mmr` now return `Result` and propagate
+  `BAD_CLAIMS` so the initial paint **and** the event loop route it through the same
+  refresh-tokens-and-retry-once arm (previously the initial snapshot and the name/MMR paths
+  swallowed it).
+- **429 retry.** rank/name fetches do one ~6s backed-off retry on a 429 instead of silently
+  yielding Unranked.
+- **404-race timing.** coregame retries once after ~5s, pregame retries immediately (was 2s
+  for both), per §10.5.
+- **Malformed presence.** A single un-parseable presence entry in a websocket batch is skipped,
+  not treated as aborting the whole event.
+- **Empty own presence.** An absent own presence, or one with an empty `private` blob, surfaces
+  `NotReady` (poll again) instead of rendering as MENUS.
+- **Deps trimmed** (lightweightness): dropped the unused `tracing` dep and the duplicate
+  `serde_json` dev-dependency; `tokio` narrowed from `full` to
+  `rt-multi-thread,macros,time,sync,net`; `reqwest` to `default-features = false` +
+  `json,native-tls`. `tauri-plugin-opener` kept (planned tracker.gg link opening).
+
+### TLS
+
+- Local HTTPS client (`reqwest`) and the local websocket (`tokio-tungstenite` + `native-tls`)
+  both accept the self-signed cert. These clients are only ever pointed at `127.0.0.1`. The
+  static-data + any public fetches use a separate ordinary client with normal cert validation.
+
+### Testing
+
+- 67 unit tests, all pure functions, driven by inline JSON fixtures authored from this spec's
+  documented shapes: lockfile parsing, presence decode (nested + flat + custom-game + LoL skip
+  + party grouping + `partyClientVersion` + empty-`private` not-ready), tier→name mapping,
+  current/peak rank (incl. before-Ascendant +3 shift), coregame/pregame extraction,
+  name-service parse, content season selection, host/shard construction (incl. `shared` shard),
+  remote error mapping, static-data lookups, websocket event parsing, the per-match name/MMR
+  cache invalidation, and the full `assemble_players` privacy + rank rules.
+- **Not covered by tests (requires a live client):** the async orchestration loop in
+  `app_state.rs`, the actual HTTP/WS calls, token-refresh-on-`BAD_CLAIMS` round trips, and the
+  real end-to-end state transitions. These compile and are structured for graceful degradation
+  but have not been exercised against a running game.
+
+### Open items needing live-game verification
+
+1. `latam`/`br`/`pbe` shard mapping produces correct pd/glz hosts.
+2. The last `competitivetiers` array entry is genuinely the current act's tier table (icons
+   match the in-game client).
+3. Both presence shapes (nested/flat) are handled correctly against whatever Riot serves now.
+4. 404/`RESOURCE_NOT_FOUND` retry timing and `BAD_CLAIMS` refresh behave in real transitions.
+5. Party grouping across all online presences matches the in-game party colours.
+
+## Live verification (2026-08-24, NA account, in-menus)
+
+Probed every endpoint against the running client and cross-checked against a vRY console row for the same account. Raw captures in session scratchpad (not committed).
+
+Confirmed:
+- Lockfile, local auth, `/entitlements/v1/token`, `/riotclient/region-locale` (region `NA`), `/chat/v4/presences`, `/chat/v1/session`: all work as specced.
+- Private presence is currently the NESTED shape (`matchPresenceData` / `partyPresenceData` / `playerPresenceData` / `premierPresenceData`). Values matched vRY exactly: accountLevel, competitiveTier 21, partyId, sessionLoopState MENUS.
+- `/mmr/v1/players/{puuid}`: current-season tier 21 + RR 36 = vRY "Ascendant 1 (36)". Peak from `WinsByTier` max across seasons = 22 (Ascendant 2) = vRY. vRY's WR figure = current-season `NumberOfWins/NumberOfGames` (8/14 = 57%), NOT all-time match history.
+- `/mmr/.../competitiveupdates?queue=competitive`: `RankedRatingEarned` of newest match = vRY's ΔRR (+13). Last-5 W/L derivable from `RankedRatingEarned` sign (note: 0-RR edge cases exist).
+- `name-service/v2/players` (PUT, puuid array): returns GameName/TagLine.
+- `match-history/v1/history` + `match-details/v1/matches/{id}` (~500 KB per match): respond fine; HS% source confirmed available.
+- valorant-api.com `/v1/competitivetiers`: LAST array entry is the current tier table (tier 21 = ASCENDANT 1, icons present). Use last entry. (Resolves implementation-notes gap.)
+
+New finding — client version staleness: valorant-api.com reported `...shipping-18-5304478` while the actual running client is `...shipping-20-5340415` (visible in presence `partyPresenceData.partyClientVersion`). pd accepted the stale header today, but on patch days Riot may reject it. Recommendation: prefer the version from own presence (or local session data) once connected, with valorant-api.com as bootstrap/fallback.
+
+Still needing live verification later: latam/br->na shard mapping (NA account can't test), flat presence shape in the wild, 404-race + BAD_CLAIMS timing during real pregame/ingame transitions, party color grouping with an actual party, ingame/pregame endpoints themselves (was in menus during probe).
+
+## Live verification round 2 (2026-08-24, in-game, NA, 2v2 skirmish)
+
+Probed from inside a running match; all values cross-checked against vRY console output for the same match.
+
+Confirmed:
+- glz host construction `glz-na-1.na.a.pvp.net` works as built.
+- `GET /core-game/v1/players/{puuid}` -> MatchID; `GET /core-game/v1/matches/{id}` -> `Players[]` with `Subject`, `TeamID` (Red/Blue), `CharacterID`, `PlayerIdentity.{Incognito,HideAccountLevel,AccountLevel}` exactly as specced. Incognito and hide-level flags matched vRY's rendering (hidden name shown as agent, levels blanked; own level reads 0 in-match when hidden).
+- `GET /core-game/v1/matches/{id}/loadouts` (~79 KB for 4 players): shape is `Loadouts[] -> {Subject, CharacterID, Loadout.Items}`. Vandal = item key `9c82e19d-4575-0200-1a81-3eacf00cf872`; skin uuid at socket `bcef87d6-209b-46c6-8b19-fbe40bd95abc` -> `.Item.ID`; resolves via valorant-api `/v1/weapons/skins/{uuid}` (displayName). Resolved all 4 players' Vandal skins matching vRY exactly (Neptune/Mystbloom/Reaver/Aeris). Tier-2 skin column fully validated.
+- Cross-player MMR fetch (`/mmr/v1/players/{other-puuid}`) works with own tokens.
+
+Still open: latam/br shard mapping, flat presence shape, 404-race/BAD_CLAIMS timing at real transitions, party grouping with an actual multi-player party (this match was solo, partySize 1).
