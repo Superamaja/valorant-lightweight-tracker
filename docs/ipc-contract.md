@@ -1,8 +1,8 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-08-24. Status: backend implemented; this is the exact TypeScript-facing
-contract the UI agent builds against. Everything the frontend receives is already
-display-ready — no Riot-API-shape interpretation happens in the UI.
+Last updated: 2026-08-24 (phase 2 stats added). Status: backend implemented; this is the
+exact TypeScript-facing contract the UI agent builds against. Everything the frontend
+receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
 
 The backend exposes **two Tauri commands** and emits **one Tauri event**. All payloads are
 `serde`-serialized with `camelCase` field names.
@@ -39,6 +39,29 @@ on mount to render immediately without waiting for the next event.
 
 Name: **`tracker-state`**. Payload: a `TrackerSnapshot` (below). Emitted on every resolved
 state change (dedup'd — identical snapshots are not re-emitted).
+
+**Two-phase snapshots at match start.** Entering Pregame or Ingame fires **two** events in
+quick succession for the same match (the heavy per-player stats take several seconds of
+sequential fetching, so the backend does not make the UI wait for them):
+
+1. **Fast snapshot** — as soon as names + MMR are in: `status`, `map`, `mode`, `ownTeam`,
+   and per row the `name`, `agent`, `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
+   `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
+   no extra request). The heavier fields are **not yet populated**: `rrChange` is `null`,
+   `recentResults` is `[]`, `headshotPercent` is `null`, and `vandalSkin` / `phantomSkin`
+   are `null`.
+2. **Enriched snapshot** — a moment later, the same rows with `rrChange`, `recentResults`,
+   `headshotPercent`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
+
+The UI **must render the fast snapshot immediately** and let those fields fill in on the
+enriched event — treat a `null`/empty heavy field as "still loading" during a match, not as
+"no data". (If a player genuinely has no recent competitive matches, the enriched snapshot
+still carries `null`/`[]` for them — the two are indistinguishable from the UI's side, which
+is fine: render the same "N/A" placeholder either way.) Re-entering an already-loaded match
+(the score changes each round) emits a **single** already-enriched snapshot. A Pregame→Ingame
+transition re-runs the two phases for the now-visible enemy team. All of this rides the
+existing dedup, so listeners need no special handling beyond expecting stats to arrive on a
+later event than the row itself.
 
 ```ts
 import { listen } from "@tauri-apps/api/event";
@@ -102,6 +125,26 @@ interface PlayerRow {
   peakRank: RankInfo;           // highest rank across all recorded seasons
   accountLevel: number | null;  // null when hidden from this viewer (see rules below)
   partyId: string | null;       // grouping id; set only when the player is in a party of >1
+
+  // --- Phase 2 per-player stats ---
+  winRate: WinRate | null;      // current-season WR; null when 0 games this season
+  rrChange: number | null;      // ΔRR of the player's newest competitive match; null if none
+  recentResults: MatchResult[]; // up to 5 recent comp results, newest first; [] when none
+  headshotPercent: number | null; // HS% over recent comp matches (0–100); null when "N/a"
+  vandalSkin: SkinInfo | null;  // equipped Vandal skin; null in Pregame / Menus
+  phantomSkin: SkinInfo | null; // equipped Phantom skin; null in Pregame / Menus
+}
+
+interface WinRate {
+  percent: number;              // wins/games*100, rounded int (the "57" in vRY "57 (14)")
+  games: number;                // competitive games this season (the "(14)")
+}
+
+type MatchResult = "Win" | "Loss" | "Unknown"; // "Unknown" = 0-RR match (ambiguous sign)
+
+interface SkinInfo {
+  name: string;                 // "Neptune Vandal" ("" if unresolved)
+  iconUrl: string | null;       // valorant-api displayIcon URL
 }
 
 interface AgentInfo {
@@ -125,6 +168,14 @@ interface RankInfo {
   render the waiting/empty state. `Pregame` carries **only the local player's team** (max 5
   rows) — Riot does not expose enemies during agent select; this is a platform limit, not a
   bug. `Ingame` carries the full roster.
+- **Row order is guaranteed by the backend — the UI must NOT re-sort.** `players[]` is always
+  ordered: (1) the local player's team (`isAlly === true`) first, then the enemy team;
+  (2) within the ally block the local player (`isSelf === true`) is first; (3) the remaining
+  rows in each block are sorted by display name (case-insensitive), with hidden/unresolved
+  names (`name === null`, e.g. incognito) last, tie-broken by `id` (puuid) for stability.
+  Render rows in array order. **Colour by `isAlly` only** (ally block = blue, enemy = red);
+  do not read the raw `team` id for colour — it is Riot's internal Red/Blue label, exposed
+  only for debugging, and does not correspond to the ally/enemy split.
 - **`mode`** is one of: `Competitive`, `Unrated`, `Swiftplay`, `Spike Rush`, `Deathmatch`,
   `Escalation`, `Replication`, `Team Deathmatch`, `Custom`, `Snowball Fight`,
   `All Random One Site`, `Knockout`, `New Map`, or `Custom Game` (customs). Unknown queue ids
@@ -146,6 +197,29 @@ interface RankInfo {
   game patch. The backend caches the static-data *mappings*; the images themselves are plain
   URLs the UI loads (and may cache) directly.
 - **`lastUpdated`** is epoch ms — use it for the "last updated" text in the header.
+
+### Phase 2 stat fields
+
+- **All phase-2 stats are populated for every player, incognito included** — a hidden player
+  still shows WR / ΔRR / last-5 / HS% / skins; only `name` and `accountLevel` are withheld
+  (their puuid is known, so the stats are real). This matches vRY.
+- **`winRate`** is derived from the same MMR payload used for ranks (no extra request):
+  `{ percent, games }` where `percent = round(NumberOfWins / NumberOfGames * 100)`. `null`
+  when the player has 0 competitive games this season (render "N/A"). vRY renders this as
+  `"{percent} ({games})"`, e.g. `"57 (14)"`.
+- **`rrChange`** is the newest competitive match's `RankedRatingEarned` (can be negative,
+  zero, or positive). `null` when the player has no recent competitive matches.
+- **`recentResults`** is up to 5 recent competitive results, **newest first**, each derived
+  from `RankedRatingEarned` sign: `> 0 → "Win"`, `< 0 → "Loss"`, `= 0 → "Unknown"` (a 0-RR
+  match is genuinely ambiguous — draw / placement / AFK-adjusted; render it as a neutral pip,
+  not a loss). `[]` when the player has no recent competitive matches.
+- **`headshotPercent`** is an integer 0–100 computed over the last few competitive matches
+  (`headshots / (headshots + bodyshots + legshots)`, matching vRY). `null` when the player
+  has no recent matches (render "N/a").
+- **`vandalSkin` / `phantomSkin`** are populated only in `Ingame` (Riot exposes loadouts only
+  once the match starts) — both are `null` in `Pregame` and `Menus`. A `SkinInfo` with an
+  empty `name` means the skin uuid was not in the static-data cache (render the icon if
+  present, otherwise a placeholder).
 
 ## Notes for the UI
 

@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-24. Status: baseline agreed in conversation; no reference images yet — user may supply some later.
 
-> **PROCESS GATE:** Claude does NOT implement or create UI, and does NOT spawn UI subagents. When UI implementation/creation work comes up, Claude writes a complete, ready-to-paste agent prompt (spec, file paths, constraints, verification steps) and hands it to the user — the user runs it themselves with their preferred model. Small mechanical frontend fixes on existing UI (typo, broken import) are fine; anything design/implementation-level goes through the prompt handoff.
+> **PROCESS GATE:** Claude does NOT implement or create UI, and does NOT spawn UI subagents. When UI implementation work comes up, Claude writes a complete, ready-to-paste agent prompt (spec, file paths, constraints, verification steps) and hands it to the user — the user runs it themselves with their preferred model and a higher effort level than subagents get. Small mechanical fixes to existing UI (typo, broken import) are fine; anything design/implementation-level goes through the prompt handoff. Fable review after the user's agent finishes still applies (user will ask for it).
 
 ## Core principle: images over text
 
@@ -17,7 +17,7 @@ The user's main gripe with vRY's TUI is text ranks. Every place an image exists 
 
 - Single window, single screen. No tabs/navigation in v1. The player table IS the app.
 - **Header strip:** map name + mode, app-state chip ("Waiting for match" / "Agent select" / "In match") that doubles as the health indicator, subtle "last updated" text.
-- **Main region:** table split into two team blocks (ally / enemy), subtle teal/red tinted accents — not loud fills.
+- **Main region:** table split into two team blocks — **user's team ALWAYS first and ALWAYS blue** (enemy second, red), regardless of Riot's internal Red/Blue team ids (user dislikes vRY using raw API order/colors). The backend guarantees this ordering in players[] (ally block first, self first within it); the UI colors only by `isAlly`, never by the raw team id. Subtle tinted accents, not loud fills.
 - **Row, left→right:** agent portrait · name#tag · current rank icon (+RR) · peak rank icon (smaller, muted) · account level. Party members marked with matching dot color or thin bracket.
 
 ## Style

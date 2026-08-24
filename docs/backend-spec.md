@@ -413,10 +413,64 @@ could not be verified because Valorant was not running on the build machine (no 
 - **Season label parsing** (`content.get_act_episode_from_act_id`, the "peak: Immortal 2 (E5A3)"
   text): **not implemented** — the UI spec only needs the peak *icon*. `content::previous_season_id`
   exists (behind `#[allow(dead_code)]`) as a hook if the act-label feature is added later.
-- **Win rate / match-history**: not implemented (out of scope, per the gaps section above).
+- **Win rate / match-history**: implemented in phase 2 (see the phase-2 section below). WR
+  reuses the phase-1 MMR payload; HS% reuses the competitiveupdates match-id list instead of a
+  separate match-history call.
 - **Static-data cache**: version-keyed JSON files under
   `%LOCALAPPDATA%\valorant-lightweight-tracker\static-cache\static-<version>.json`. Image PNGs
   themselves are passed to the UI as plain valorant-api URLs (not downloaded/cached in Rust).
+
+### Phase 2 — per-player stats (2026-08-24)
+
+Added the five wishlist columns from `ui-spec.md` (WR, ΔRR + last-5 W/L, HS%, Vandal +
+Phantom skins). New modules: `riot/stats.rs` (competitiveupdates + match-details parsing),
+`riot/loadout.rs` (skin-id extraction). Extended: `riot/rank.rs` (`compute_win_rate`),
+`riot/static_data.rs` (weapon-skin cache from `/v1/weapons/skins`), `riot/remote_api.rs`
+(`competitive_updates`, `match_details`, `coregame_loadouts`), `riot/types.rs`
+(`WinRate`, `MatchResult`, `SkinInfo` + 6 `PlayerRow` fields), `app_state.rs` (stat fetch
++ caching), `riot/assemble.rs` (wiring + row ordering). New `PlayerRow` fields and exact
+serde camelCase names are in `docs/ipc-contract.md`.
+
+- **WR** — current-season `NumberOfWins / NumberOfGames` from the MMR payload already fetched
+  in phase 1. **Zero new requests.** Live-verified as exactly what vRY shows (8/14 → "57
+  (14)"). `null` when 0 games. (Note: this uses `NumberOfWins`, not `NumberOfWinsWithPlacements`
+  — the two were equal on the probe; §7's older note said WinsWithPlacements, superseded by the
+  live cross-check against the vRY row.)
+- **ΔRR + last-5** — `GET /mmr/v1/players/{puuid}/competitiveupdates?startIndex=0&endIndex=10&queue=competitive`,
+  1 request/player. ΔRR = `Matches[0].RankedRatingEarned`; pips from each match's
+  `RankedRatingEarned` sign, **0-RR → `Unknown`** (ambiguous, per the task's edge note; vRY
+  reads sign only). `AFKPenalty`/`RRPenalty` fields are present but not used for the pip.
+- **HS%** — replicates vRY `player_stats._process_match_data` exactly: sum
+  `headshots / (headshots+bodyshots+legshots)` across every round's `damage` entries for the
+  player, `round()` to int, "N/a" when no hits. **The match id list is reused from the
+  competitiveupdates response** (`Matches[].MatchID`) rather than a separate
+  `match-history` request — this keeps the match-start burst to the documented budget
+  (competitiveupdates already carries the ids). `RECENT_MATCHES_FOR_HS = 3` match-details per
+  uncached player (vRY uses 1; widened for a steadier figure — constant in `constants.rs`).
+  match-details are ~500 KB, so HS% is **cached per puuid keyed by newest competitive match
+  id** in a session-lived `HsCache` (survives match→menus→match; self-invalidates when the
+  player plays a new comp match). Deviation from the wishlist's "match-history + match-details"
+  wording: match-history is not fetched — competitiveupdates supplies the ids for free.
+- **Vandal + Phantom skins** — `GET /core-game/v1/matches/{id}/loadouts`, 1 request/match,
+  **INGAME only** (pregame/menus → `null`). Path `Loadouts[].Loadout.Items["<weapon
+  uuid>"].Sockets["bcef87d6-…"].Item.ID` → skin uuid → `/v1/weapons/skins` cache for name +
+  icon. Vandal `9c82e19d-4575-0200-1a81-3eacf00cf872`, Phantom
+  `ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a` (from `/v1/weapons`). All in `constants.rs`.
+- **Stats for incognito players ARE fetched and shown** (puuid is known; vRY does this) — only
+  name/level stay hidden. Applied in `assemble.rs` (no incognito gate on the stat fields).
+- **Row ordering (user decision).** The backend now owns ordering: ally block (`is_ally`)
+  first then enemies; `is_self` first within the ally block; deterministic within each block
+  by display name (case-insensitive, hidden/unresolved names last) tie-broken by puuid. The UI
+  colours by `is_ally` only and must not re-sort or read the raw Red/Blue `team` id as a
+  colour. Implemented in `assemble::order_rows`, contract documented in `ipc-contract.md`.
+
+**Request-count math at match start (10 players, all uncached, INGAME):** unchanged phase-1
+core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) **plus phase
+2**: 10 competitiveupdates + up to 10×3 = 30 match-details + 1 loadouts = **41 new requests**.
+All routed through the existing 429 retry with a `INTER_REQUEST_DELAY_MS = 120` pause between
+per-player requests. Re-entry for the same match (score changes every round) refetches
+**nothing** — `MatchCache` serves it; returning players skip match-details via `HsCache`. WR
+adds **0** requests (reuses phase-1 MMR).
 
 ### Review-pass fixes (2026-08-24)
 
@@ -449,6 +503,45 @@ Applied after a Fable review of the first backend cut:
   `rt-multi-thread,macros,time,sync,net`; `reqwest` to `default-features = false` +
   `json,native-tls`. `tauri-plugin-opener` kept (planned tracker.gg link opening).
 
+### Phase-2 review fixes (2026-08-24)
+
+Applied after a Fable review of the phase-2 cut (`app_state.rs` + a few pure helpers):
+
+- **Cache freshness now keyed on state, not just match id (HIGH).** Pregame and coregame
+  share the same match GUID, so a cache built in PREGAME (5 allies, no loadouts) was wrongly
+  reused verbatim INGAME — enemies rendered empty and Vandal/Phantom skins stayed null all
+  match. `MatchCache` now stores `ingame` + `enriched`; `is_fresh_for(match_id, ingame)`
+  treats a pregame cache as **stale** once INGAME. On the pregame→ingame upgrade the already
+  fetched ally rows (names/MMR/updates/HS) are **reused** (`begin_match` keeps same-match
+  data); only the newly visible enemies + the loadouts are fetched. Unit-tested.
+- **Two-phase emit (HIGH).** The first in-match snapshot no longer waits on the whole
+  sequential burst (10 competitiveupdates + up to 30×500 KB match-details + loadouts). Phase 1
+  publishes as soon as names + MMR are in (ranks/RR/peak/WR — WR is free); phase 2 fetches
+  updates/HS/skins and publishes the enriched snapshot. The dedup'd `tracker-state` event
+  carries both. Documented for the UI in `ipc-contract.md`.
+- **Enrichment is interruptible (HIGH).** The phase-2 burst runs inline in the session loop;
+  it now drains the poke channel between per-player requests and aborts (rebuilding for the
+  current state) when a new presence event arrives, so a dodge/transition during phase 2
+  surfaces promptly instead of blocking behind the remaining match-details. Partial phase-2
+  results stay cached, so the rebuild only finishes the missing work.
+- **BadClaims mid-burst (MEDIUM).** Chose the simpler mitigation: **proactively refresh the
+  token before an uncached/upgrade burst** (best-effort local call). A stale token is the
+  common between-matches case, so this removes the mid-burst BadClaims redo without the
+  plumbing of partial-store-then-propagate. (Phase-1 results are also stored before phase 2,
+  so even a late BadClaims doesn't redo names/MMR.)
+- **Round half-to-even (MEDIUM).** `compute_win_rate` and `HitCounts::headshot_percent` use
+  `round_ties_even()` to match Python `round()` exactly (12.5 → 12, not 13). Tie-case tests
+  added (1/8 games, 1/8 headshots).
+- **Sleep placement (LOW).** The 120 ms inter-request delay now sits only *between* requests
+  — no trailing sleep after the last request of a loop, none after a failure or a
+  cache-hit/skip. MMR fetches got the delay too (were missing it), matching the spec's
+  per-player 120 ms.
+- **Skin cache trimmed (LOW).** Static data now fetches `/v1/weapons` and keeps only the
+  Vandal + Phantom `skins` arrays (matched by parent weapon uuid) instead of storing all ~5k
+  skins from `/v1/weapons/skins`. Disk cache stays version-keyed.
+- **Row-order key (LOW).** `assemble::order_rows` uses `sort_by_cached_key` so each row's
+  lowercased-name key is computed once, not per pairwise comparison.
+
 ### TLS
 
 - Local HTTPS client (`reqwest`) and the local websocket (`tokio-tungstenite` + `native-tls`)
@@ -457,13 +550,22 @@ Applied after a Fable review of the first backend cut:
 
 ### Testing
 
-- 67 unit tests, all pure functions, driven by inline JSON fixtures authored from this spec's
-  documented shapes: lockfile parsing, presence decode (nested + flat + custom-game + LoL skip
+- 92 unit tests (86 as below + 6 from the phase-2 review fixes: the `MatchCache` freshness
+  rule incl. the pregame-stale-when-ingame guard and same-match reuse, plus round-half-to-even
+  tie cases for WR and HS%), all pure functions, driven by inline JSON fixtures
+  authored from this spec's documented shapes (phase-2 fixtures sanitized from the live probe
+  captures — fake puuids/names/skin ids, real numeric values): lockfile parsing, presence
+  decode (nested + flat + custom-game + LoL skip
   + party grouping + `partyClientVersion` + empty-`private` not-ready), tier→name mapping,
   current/peak rank (incl. before-Ascendant +3 shift), coregame/pregame extraction,
   name-service parse, content season selection, host/shard construction (incl. `shared` shard),
-  remote error mapping, static-data lookups, websocket event parsing, the per-match name/MMR
-  cache invalidation, and the full `assemble_players` privacy + rank rules.
+  remote error mapping, static-data lookups (incl. skin resolution + icon fallback), websocket
+  event parsing, the per-match cache invalidation, the session-lived HS% cache keying, and the
+  full `assemble_players` privacy + rank + ordering rules. Phase-2 additions: WR derivation
+  (incl. 0-games null + rounding), ΔRR + last-5 pips (incl. 0-RR `Unknown` ambiguity), HS%
+  math (hand-computed 9/26/1 → 25% from the real capture, then sanitized) incl. cross-match
+  accumulation, loadout skin extraction (Vandal + Phantom), the HS% single-fetch cache, and
+  row ordering (self-first, ally-block-first, deterministic name/puuid tiebreak).
 - **Not covered by tests (requires a live client):** the async orchestration loop in
   `app_state.rs`, the actual HTTP/WS calls, token-refresh-on-`BAD_CLAIMS` round trips, and the
   real end-to-end state transitions. These compile and are structured for graceful degradation
@@ -477,6 +579,20 @@ Applied after a Fable review of the first backend cut:
 3. Both presence shapes (nested/flat) are handled correctly against whatever Riot serves now.
 4. 404/`RESOURCE_NOT_FOUND` retry timing and `BAD_CLAIMS` refresh behave in real transitions.
 5. Party grouping across all online presences matches the in-game party colours.
+6. (Phase 2) The match-start stat burst (41 requests for a 10-player lobby) stays under Riot's
+   rate limit with the 120 ms inter-request delay + 429 retry — the probe captures were solo/
+   2v2, so the full-lobby throughput is untested. Loadouts were verified for 4 players; the
+   Phantom weapon id + a Phantom-equipped player were only cross-checked via valorant-api, not
+   a live 10-player loadouts payload.
+7. **Pregame vs coregame match-id equality.** The phase-2 cache now assumes the PREGAME and
+   INGAME endpoints report the **same** match GUID for one match (so a pregame-built cache is
+   explicitly treated as stale — not merely absent — once INGAME; see the "Phase-2 review
+   fixes" note). This equality is the standard community understanding but was not confirmed
+   against a live pregame→ingame transition on this build. Verify that
+   `pregame/v1/players/{puuid}.MatchID` equals the subsequent
+   `core-game/v1/players/{puuid}.MatchID`. If they ever differ, the pregame→ingame data reuse
+   still works by match-id fallback but the freshness guard becomes a no-op (harmless — the
+   ingame build just refetches everything).
 
 ## Live verification (2026-08-24, NA account, in-menus)
 

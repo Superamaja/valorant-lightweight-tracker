@@ -119,6 +119,27 @@ impl RemoteClient {
         self.get(&format!("{}/mmr/v1/players/{}", self.hosts.pd, puuid)).await
     }
 
+    /// competitiveupdates: ΔRR + last-N W/L + recent match ids (phase 2). Competitive queue,
+    /// small window (spec Live verification + probe capture).
+    pub async fn competitive_updates(&self, puuid: &str) -> Result<Value> {
+        let end = crate::riot::constants::COMPETITIVE_UPDATES_END_INDEX;
+        self.get(&format!(
+            "{}/mmr/v1/players/{}/competitiveupdates?startIndex=0&endIndex={}&queue=competitive",
+            self.hosts.pd, puuid, end
+        ))
+        .await
+    }
+
+    /// match-details for one match (~500 KB) — the HS% source (phase 2).
+    pub async fn match_details(&self, match_id: &str) -> Result<Value> {
+        self.get(&format!("{}/match-details/v1/matches/{}", self.hosts.pd, match_id)).await
+    }
+
+    /// coregame loadouts for a match (~79 KB) — Vandal/Phantom skins (phase 2, INGAME only).
+    pub async fn coregame_loadouts(&self, match_id: &str) -> Result<Value> {
+        self.get(&format!("{}/core-game/v1/matches/{}/loadouts", self.hosts.glz, match_id)).await
+    }
+
     pub async fn names(&self, puuids: &[String]) -> Result<Value> {
         let body = serde_json::to_value(puuids)?;
         self.put_json(&format!("{}/name-service/v2/players", self.hosts.pd), &body).await

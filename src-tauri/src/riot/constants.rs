@@ -89,6 +89,34 @@ pub const CLIENT_PLATFORM: &str = "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Z
 /// Static User-Agent vRY sends for remote calls.
 pub const USER_AGENT: &str = "ShooterGame/13 Windows/10.0.19043.1.256.64bit";
 
+// --- Phase 2: per-player stats ---------------------------------------------
+
+/// Weapon item uuid for the Vandal in a coregame loadout's `Loadout.Items` map.
+/// (Verified live — spec Live verification round 2.)
+pub const VANDAL_WEAPON_ID: &str = "9c82e19d-4575-0200-1a81-3eacf00cf872";
+
+/// Weapon item uuid for the Phantom (from valorant-api `/v1/weapons`).
+pub const PHANTOM_WEAPON_ID: &str = "ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a";
+
+/// Socket uuid whose `Item.ID` holds the equipped skin uuid, inside a weapon item's
+/// `Sockets` map. (Verified live — spec Live verification round 2.)
+pub const SKIN_SOCKET_ID: &str = "bcef87d6-209b-46c6-8b19-fbe40bd95abc";
+
+/// Number of recent competitive matches HS% is averaged over (vRY uses 1; we widen the
+/// sample for a steadier figure). match-details are ~500 KB each, so keep this small.
+pub const RECENT_MATCHES_FOR_HS: usize = 3;
+
+/// Number of W/L pips shown for the "last games" column.
+pub const RECENT_RESULTS_COUNT: usize = 5;
+
+/// `endIndex` for the competitiveupdates request (a small window covering ΔRR + pips +
+/// the match ids HS% reuses). Matches the live probe.
+pub const COMPETITIVE_UPDATES_END_INDEX: u32 = 10;
+
+/// Small delay between the burst of per-player stat requests at match start, to stay
+/// under Riot's rate limit alongside the existing 429 retry. Milliseconds.
+pub const INTER_REQUEST_DELAY_MS: u64 = 120;
+
 /// Map region -> pd/glz shard. shard == region except latam/br -> na; pbe -> na.
 /// (Inferred from valclient.py + vRY's pbe special-case; see spec gaps.)
 pub fn region_to_shard(region: &str) -> &str {

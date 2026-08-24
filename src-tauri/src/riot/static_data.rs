@@ -1,9 +1,10 @@
 //! valorant-api.com static data: parsing + lookup + a version-keyed on-disk cache.
 //! Parsing/lookup functions are pure and fixture-testable; fetching/caching is IO.
 
+use crate::riot::constants::{PHANTOM_WEAPON_ID, VANDAL_WEAPON_ID};
 use crate::riot::error::Result;
 use crate::riot::rank::tier_name;
-use crate::riot::types::{AgentInfo, MapInfo, RankInfo};
+use crate::riot::types::{AgentInfo, MapInfo, RankInfo, SkinInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -32,6 +33,12 @@ struct TierStatic {
     large_icon: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkinStatic {
+    display_name: String,
+    display_icon: Option<String>,
+}
+
 /// Cached, parsed static data for one game version.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StaticData {
@@ -41,6 +48,9 @@ pub struct StaticData {
     maps: Vec<MapStatic>,
     /// CompetitiveTier number -> icons.
     tiers: HashMap<u8, TierStatic>,
+    /// lowercased weapon-skin uuid -> name + icon (phase 2: Vandal/Phantom skins).
+    #[serde(default)]
+    skins: HashMap<String, SkinStatic>,
 }
 
 impl StaticData {
@@ -65,6 +75,18 @@ impl StaticData {
             name: found.map(|m| m.display_name.clone()).unwrap_or_default(),
             splash_url: found.and_then(|m| m.splash.clone()),
             list_view_url: found.and_then(|m| m.list_view_icon.clone()),
+        })
+    }
+
+    /// Resolve a weapon-skin uuid (any case) to display-ready info. `None` skin id -> None
+    /// (weapon not equipped / pregame). An unknown uuid still returns an entry with an empty
+    /// name so the UI can decide how to render it.
+    pub fn skin(&self, skin_id: Option<&str>) -> Option<SkinInfo> {
+        let id = skin_id?.to_lowercase();
+        let s = self.skins.get(&id);
+        Some(SkinInfo {
+            name: s.map(|s| s.display_name.clone()).unwrap_or_default(),
+            icon_url: s.and_then(|s| s.display_icon.clone()),
         })
     }
 
@@ -168,13 +190,68 @@ fn parse_competitive_tiers(value: &Value) -> HashMap<u8, TierStatic> {
     out
 }
 
-/// Build `StaticData` from the four already-fetched payloads.
-pub fn build(version: String, agents: &Value, maps: &Value, tiers: &Value) -> StaticData {
+/// Parse the `/weapons` payload, keeping ONLY the Vandal + Phantom skins (matched by the
+/// parent weapon uuid) — the two rifles the table surfaces. Filtering by weapon here instead
+/// of storing all ~5k skins from `/weapons/skins` keeps the version-keyed disk cache tiny.
+/// Matching on the parent weapon (rather than a skin `assetPath` heuristic) is the robust
+/// route: the two weapons' `skins` arrays are exactly the skins we need. Some skins have a
+/// null top-level `displayIcon` (default/random skins); fall back to the first level's icon.
+fn parse_weapon_skins(value: &Value) -> HashMap<String, SkinStatic> {
+    let mut out = HashMap::new();
+    let Some(arr) = value.get("data").and_then(|d| d.as_array()) else {
+        return out;
+    };
+    for weapon in arr {
+        let Some(weapon_uuid) = weapon.get("uuid").and_then(|v| v.as_str()) else { continue };
+        let weapon_uuid = weapon_uuid.to_lowercase();
+        if weapon_uuid != VANDAL_WEAPON_ID && weapon_uuid != PHANTOM_WEAPON_ID {
+            continue;
+        }
+        let Some(skins) = weapon.get("skins").and_then(|s| s.as_array()) else { continue };
+        for s in skins {
+            let Some(uuid) = s.get("uuid").and_then(|v| v.as_str()) else { continue };
+            let display_icon = s
+                .get("displayIcon")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    s.get("levels")
+                        .and_then(|l| l.as_array())
+                        .and_then(|l| l.first())
+                        .and_then(|lvl| lvl.get("displayIcon"))
+                        .and_then(|v| v.as_str())
+                })
+                .map(String::from);
+            out.insert(
+                uuid.to_lowercase(),
+                SkinStatic {
+                    display_name: s
+                        .get("displayName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    display_icon,
+                },
+            );
+        }
+    }
+    out
+}
+
+/// Build `StaticData` from the already-fetched payloads. `weapons` is the `/weapons`
+/// payload (the Vandal + Phantom skins are extracted from it).
+pub fn build(
+    version: String,
+    agents: &Value,
+    maps: &Value,
+    tiers: &Value,
+    weapons: &Value,
+) -> StaticData {
     StaticData {
         version,
         agents: parse_agents(agents),
         maps: parse_maps(maps),
         tiers: parse_competitive_tiers(tiers),
+        skins: parse_weapon_skins(weapons),
     }
 }
 
@@ -236,8 +313,12 @@ pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
     let maps: Value = client.get(format!("{VALORANT_API}/maps")).send().await?.json().await?;
     let tiers: Value =
         client.get(format!("{VALORANT_API}/competitivetiers")).send().await?.json().await?;
+    // `/weapons` (not `/weapons/skins`) so we can filter to just the Vandal + Phantom skins
+    // by their parent weapon uuid — far smaller than the ~5k-entry full skin list.
+    let weapons: Value =
+        client.get(format!("{VALORANT_API}/weapons")).send().await?.json().await?;
 
-    let data = build(version, &agents, &maps, &tiers);
+    let data = build(version, &agents, &maps, &tiers, &weapons);
     let _ = save_cache(&data); // best-effort cache write
     Ok(data)
 }
@@ -259,7 +340,7 @@ mod tests {
             { "uuid": "ADD6443A-41BD-E414-F6AD-E58D267F4E95", "displayName": "Reyna",
               "displayIcon": "https://x/reyna.png", "isPlayableCharacter": true }
         ]});
-        let data = build("v".into(), &agents, &json!({}), &json!({}));
+        let data = build("v".into(), &agents, &json!({}), &json!({}), &json!({}));
         let a = data.agent(Some("add6443a-41bd-e414-f6ad-e58d267f4e95")).unwrap();
         assert_eq!(a.name, "Reyna");
         assert_eq!(a.icon_url.as_deref(), Some("https://x/reyna.png"));
@@ -275,7 +356,7 @@ mod tests {
         let agents = json!({ "data": [
             { "uuid": "dup", "displayName": "Sova(NPE)", "isPlayableCharacter": false }
         ]});
-        let data = build("v".into(), &agents, &json!({}), &json!({}));
+        let data = build("v".into(), &agents, &json!({}), &json!({}), &json!({}));
         // still returns an id-only info (not in map) but the entry was skipped.
         assert_eq!(data.agent(Some("dup")).unwrap().name, "");
     }
@@ -286,7 +367,7 @@ mod tests {
             { "uuid": "m1", "mapUrl": "/Game/Maps/Ascent/Ascent", "displayName": "Ascent",
               "splash": "https://x/splash.png", "listViewIcon": "https://x/list.png" }
         ]});
-        let data = build("v".into(), &json!({}), &maps, &json!({}));
+        let data = build("v".into(), &json!({}), &maps, &json!({}), &json!({}));
         let m = data.map(Some("/game/maps/ascent/ascent")).unwrap();
         assert_eq!(m.name, "Ascent");
         assert_eq!(m.splash_url.as_deref(), Some("https://x/splash.png"));
@@ -298,10 +379,50 @@ mod tests {
             { "tiers": [ { "tier": 27, "tierName": "OLD", "largeIcon": "old.png" } ] },
             { "tiers": [ { "tier": 27, "tierName": "RADIANT", "smallIcon": "s.png", "largeIcon": "new.png" } ] }
         ]});
-        let data = build("v".into(), &json!({}), &json!({}), &tiers);
+        let data = build("v".into(), &json!({}), &json!({}), &tiers, &json!({}));
         let r = data.rank(27);
         assert_eq!(r.name, "Radiant");
         assert_eq!(r.icon_url.as_deref(), Some("new.png")); // from the LAST table
+    }
+
+    #[test]
+    fn resolves_skin_case_insensitively_with_icon_fallback() {
+        // `/weapons` shape: each weapon carries its own `skins` array. Only the Vandal +
+        // Phantom weapons' skins are kept; every other weapon's skins are filtered out.
+        let weapons = json!({ "data": [
+            { "uuid": VANDAL_WEAPON_ID, "displayName": "Vandal", "skins": [
+                { "uuid": "DB91451C-4309-2C8C-EDED-BF842D844E52", "displayName": "Neptune Vandal",
+                  "displayIcon": "https://x/neptune.png" },
+                // default skin: null top-level displayIcon, icon in levels[0]
+                { "uuid": "fallback-skin", "displayName": "Standard Vandal", "displayIcon": null,
+                  "levels": [ { "displayIcon": "https://x/standard.png" } ] }
+            ]},
+            { "uuid": PHANTOM_WEAPON_ID, "displayName": "Phantom", "skins": [
+                { "uuid": "reaver-phantom", "displayName": "Reaver Phantom",
+                  "displayIcon": "https://x/reaver.png" }
+            ]},
+            // a non-rifle weapon whose skins must be filtered out.
+            { "uuid": "some-sheriff-weapon", "displayName": "Sheriff", "skins": [
+                { "uuid": "ignored-skin", "displayName": "Ignore Me", "displayIcon": "https://x/i.png" }
+            ]}
+        ]});
+        let data = build("v".into(), &json!({}), &json!({}), &json!({}), &weapons);
+        let van = data.skin(Some("db91451c-4309-2c8c-eded-bf842d844e52")).unwrap();
+        assert_eq!(van.name, "Neptune Vandal");
+        assert_eq!(van.icon_url.as_deref(), Some("https://x/neptune.png"));
+        // level fallback for a null top-level icon.
+        let fb = data.skin(Some("fallback-skin")).unwrap();
+        assert_eq!(fb.icon_url.as_deref(), Some("https://x/standard.png"));
+        // phantom skin kept too.
+        assert_eq!(data.skin(Some("reaver-phantom")).unwrap().name, "Reaver Phantom");
+        // a non-Vandal/Phantom weapon's skin is filtered out -> resolves to an empty entry.
+        assert_eq!(data.skin(Some("ignored-skin")).unwrap().name, "");
+        // unknown uuid -> empty name, no icon.
+        let unknown = data.skin(Some("nope")).unwrap();
+        assert_eq!(unknown.name, "");
+        assert!(unknown.icon_url.is_none());
+        // None -> None.
+        assert!(data.skin(None).is_none());
     }
 
     #[test]

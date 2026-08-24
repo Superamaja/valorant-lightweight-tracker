@@ -41,6 +41,10 @@ pub struct SeasonalInfo {
     pub leaderboard_rank: i32,
     #[serde(rename = "WinsByTier", default)]
     pub wins_by_tier: Option<HashMap<String, i64>>,
+    #[serde(rename = "NumberOfWins", default)]
+    pub number_of_wins: u32,
+    #[serde(rename = "NumberOfGames", default)]
+    pub number_of_games: u32,
 }
 
 /// Current-season rank result.
@@ -88,6 +92,25 @@ pub fn compute_current(mmr: &MmrResponse, season_id: &str) -> CurrentRank {
     } else {
         CurrentRank::unranked()
     }
+}
+
+/// Current-season win rate from the same MMR payload used for ranks (no extra request).
+/// vRY shows `NumberOfWins / NumberOfGames` for the active act (probe: 8/14 -> "57 (14)").
+/// Returns `None` when the season is absent or the player has 0 games (vRY shows "N/A").
+pub fn compute_win_rate(
+    mmr: &MmrResponse,
+    season_id: &str,
+) -> Option<crate::riot::types::WinRate> {
+    let info = mmr.queue_skills.competitive.seasonal.get(season_id)?;
+    if info.number_of_games == 0 {
+        return None;
+    }
+    // Round half-to-even (banker's rounding) to match Python's `round()` exactly — that is
+    // what vRY uses, so 12.5 -> 12 (not 13). `round()` would round half away from zero and
+    // disagree on tie values.
+    let percent = ((info.number_of_wins as f64 / info.number_of_games as f64) * 100.0)
+        .round_ties_even() as u32;
+    Some(crate::riot::types::WinRate { percent, games: info.number_of_games })
 }
 
 /// Peak rank across every recorded season. Starts from `current_tier` and scans each
@@ -141,6 +164,50 @@ mod tests {
                           "LeaderboardRank": lb, "WinsByTier": wins }
             }}}
         }))
+    }
+
+    fn mmr_with_wr(season: &str, wins: u32, games: u32) -> MmrResponse {
+        parse_mmr(json!({
+            "QueueSkills": { "competitive": { "SeasonalInfoBySeasonID": {
+                season: { "CompetitiveTier": 21, "NumberOfWins": wins, "NumberOfGames": games }
+            }}}
+        }))
+    }
+
+    #[test]
+    fn win_rate_matches_vry_probe() {
+        // Sanitized from the live capture: 8 wins / 14 games -> vRY "57 (14)".
+        let mmr = mmr_with_wr("s1", 8, 14);
+        let wr = compute_win_rate(&mmr, "s1").unwrap();
+        assert_eq!(wr.percent, 57);
+        assert_eq!(wr.games, 14);
+    }
+
+    #[test]
+    fn win_rate_is_none_with_zero_games() {
+        let mmr = mmr_with_wr("s1", 0, 0);
+        assert!(compute_win_rate(&mmr, "s1").is_none());
+    }
+
+    #[test]
+    fn win_rate_is_none_when_season_missing() {
+        let mmr = mmr_with_wr("s1", 5, 10);
+        assert!(compute_win_rate(&mmr, "other").is_none());
+    }
+
+    #[test]
+    fn win_rate_rounds_to_nearest_percent() {
+        // 1/3 = 33.33 -> 33
+        assert_eq!(compute_win_rate(&mmr_with_wr("s", 1, 3), "s").unwrap().percent, 33);
+        // 2/3 = 66.67 -> 67
+        assert_eq!(compute_win_rate(&mmr_with_wr("s", 2, 3), "s").unwrap().percent, 67);
+    }
+
+    #[test]
+    fn win_rate_rounds_half_to_even() {
+        // 1/8 = 12.5 (an exact tie) -> round-half-to-even -> 12, matching Python round()
+        // (a round-half-up would wrongly give 13).
+        assert_eq!(compute_win_rate(&mmr_with_wr("s", 1, 8), "s").unwrap().percent, 12);
     }
 
     #[test]

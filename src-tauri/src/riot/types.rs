@@ -66,6 +66,37 @@ impl RankInfo {
     }
 }
 
+/// Current-season win rate (phase 2). Derived from the MMR payload already fetched for
+/// ranks — no extra request. `null` on the row when the player has 0 games this season.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WinRate {
+    /// Wins / games * 100, rounded to an integer percent.
+    pub percent: u32,
+    /// Number of competitive games played this season (the "(14)" in vRY's "57 (14)").
+    pub games: u32,
+}
+
+/// Outcome of one recent competitive match, derived from `RankedRatingEarned` sign.
+/// A 0-RR match is genuinely ambiguous (vRY reads sign only) -> `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchResult {
+    Win,
+    Loss,
+    Unknown,
+}
+
+/// A resolved weapon skin (phase 2). Populated only INGAME (loadouts aren't exposed in
+/// pregame/menus).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinInfo {
+    /// Skin display name (e.g. "Neptune Vandal"), empty if unresolved.
+    pub name: String,
+    /// valorant-api `displayIcon` URL, or null if unresolved.
+    pub icon_url: Option<String>,
+}
+
 /// One row in the in-match player table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +129,20 @@ pub struct PlayerRow {
     pub account_level: Option<u32>,
     /// Party grouping id (only set when the player is in a party of >1).
     pub party_id: Option<String>,
+    /// Current-season win rate, or null when the player has 0 games this season.
+    pub win_rate: Option<WinRate>,
+    /// ΔRR of the player's newest competitive match, or null when no recent comp match.
+    pub rr_change: Option<i32>,
+    /// Up to 5 most recent competitive results, newest first (Win/Loss/Unknown). Empty
+    /// when the player has no recent competitive matches.
+    pub recent_results: Vec<MatchResult>,
+    /// Headshot percentage across the last N recent competitive matches (0-100), or null
+    /// when the player has no recent matches (vRY shows "N/a").
+    pub headshot_percent: Option<u32>,
+    /// Equipped Vandal skin (INGAME only; null in pregame/menus).
+    pub vandal_skin: Option<SkinInfo>,
+    /// Equipped Phantom skin (INGAME only; null in pregame/menus).
+    pub phantom_skin: Option<SkinInfo>,
 }
 
 /// Resolved map info.

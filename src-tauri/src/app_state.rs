@@ -3,9 +3,10 @@
 //! the game isn't running — that is a normal `ValorantNotRunning` snapshot.
 
 use crate::riot::assemble::{assemble_players, AssembleInput};
-use crate::riot::constants::game_mode_name;
+use crate::riot::constants::{game_mode_name, INTER_REQUEST_DELAY_MS};
 use crate::riot::content;
 use crate::riot::error::{Error, Result};
+use crate::riot::loadout::{self, PlayerSkinIds};
 use crate::riot::lockfile::{self, Lockfile};
 use crate::riot::local_api::LocalClient;
 use crate::riot::match_state::{self, MatchPlayer};
@@ -14,7 +15,8 @@ use crate::riot::presence::{self, PresenceInfo};
 use crate::riot::rank::{parse_mmr, MmrResponse};
 use crate::riot::remote_api::{build_hosts, Auth, RemoteClient};
 use crate::riot::static_data::{self, StaticData};
-use crate::riot::types::{AppStatus, SessionLoopState, TrackerSnapshot};
+use crate::riot::stats::{self, HitCounts, RrHistory};
+use crate::riot::types::{AppStatus, MapInfo, SessionLoopState, TrackerSnapshot};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,7 +62,10 @@ impl TrackerState {
     }
 }
 
-/// Emit + store a snapshot only if it differs from the last one (avoids UI churn).
+/// Emit + store a snapshot only if it differs from the last one (avoids UI churn). This
+/// dedup is what makes the two-phase emit safe: the phase-1 snapshot and the enriched
+/// phase-2 snapshot differ (heavy fields fill in), so both fire, while a phase that adds
+/// nothing (e.g. a pregame with no recent matches) is silently suppressed.
 fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSnapshot) {
     {
         let prev = state.snapshot.lock().unwrap();
@@ -76,6 +81,26 @@ fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSn
     emitter.emit(&snap);
 }
 
+/// Shared build context threaded through the build path so each phase can publish directly
+/// and the enrichment can watch the poke channel to abort promptly on a state change.
+struct BuildCtx<'a> {
+    state: &'a Arc<TrackerState>,
+    emitter: &'a Arc<dyn Emitter>,
+    rx: &'a mut mpsc::Receiver<()>,
+}
+
+/// Drain the poke channel, returning true if at least one poke was waiting. Used mid-burst:
+/// a poke means a new presence event (possibly a dodge / state transition) arrived, so the
+/// enrichment should abort and let the loop rebuild for the current state rather than block
+/// the transition behind the remaining ~500 KB match-details fetches (HIGH-2).
+fn poke_pending(rx: &mut mpsc::Receiver<()>) -> bool {
+    let mut pending = false;
+    while rx.try_recv().is_ok() {
+        pending = true;
+    }
+    pending
+}
+
 /// Everything needed once connected to a running client.
 struct Session {
     lockfile: Lockfile,
@@ -84,42 +109,97 @@ struct Session {
     own_puuid: String,
     static_data: StaticData,
     season_id: String,
-    /// Names/MMR cached per match id so an in-match presence update (score changes every
-    /// round) does not refetch them (L1).
+    /// Names/MMR/stats cached per match id (+ state) so an in-match presence update (score
+    /// changes every round) does not refetch them (L1).
     cache: MatchCache,
+    /// HS% cached across matches within the session, keyed by puuid + the player's newest
+    /// competitive match id — so a returning player's ~500 KB match-details are not
+    /// re-downloaded while their newest match is unchanged (phase 2 constraint).
+    hs_cache: HsCache,
 }
 
-/// Per-match cache of the expensive lookups (names + MMR). Keyed by match id; a new match
-/// id or a transition to MENUS invalidates it. This is the core lightweightness guarantee:
-/// only the first snapshot of a given match pays for name/MMR fetches.
+/// Per-match cache of the expensive per-player lookups. Keyed by match id AND whether the
+/// data was gathered for the INGAME state; either a new match id or a pregame→ingame
+/// upgrade (same GUID, but enemies + loadouts now available) invalidates it. `enriched`
+/// tracks whether phase 2 (updates/HS/skins) has been gathered yet, so the two-phase emit
+/// can publish the fast fields first and fill the rest in on a later event.
 #[derive(Default)]
 struct MatchCache {
     match_id: Option<String>,
+    /// Whether the cached rows were gathered for the INGAME state (vs PREGAME).
+    ingame: bool,
+    /// Whether phase 2 (updates/HS/skins) has been gathered — only then is the cache "fresh"
+    /// enough to skip all fetching.
+    enriched: bool,
     names: HashMap<String, String>,
     mmr: HashMap<String, MmrResponse>,
+    /// puuid -> ΔRR + last-5 pips (phase 2).
+    updates: HashMap<String, RrHistory>,
+    /// puuid -> HS% over recent matches (phase 2; inner None == "N/a").
+    headshots: HashMap<String, Option<u32>>,
+    /// puuid -> equipped Vandal/Phantom skin uuids (phase 2, INGAME only).
+    skins: HashMap<String, PlayerSkinIds>,
 }
 
 impl MatchCache {
-    /// True when the cache already holds names/MMR for `match_id` (skip the refetch).
-    fn is_fresh_for(&self, match_id: &str) -> bool {
+    /// True only when the cache holds the FULLY enriched data for this exact match AND
+    /// state — the one case that skips all fetching.
+    ///
+    /// The state guard is the HIGH-1 fix: pregame and coregame share the same match GUID,
+    /// so keying freshness on the id alone let a cache built in PREGAME (5 allies, no
+    /// loadouts) be reused verbatim in INGAME — enemies never rendered and skins stayed
+    /// null all match. A pregame-built cache (`ingame == false`) is therefore treated as
+    /// STALE once the current state is INGAME. A phase-1-only cache (`enriched == false`)
+    /// is never fresh either — phase 2 must still run.
+    fn is_fresh_for(&self, match_id: &str, ingame: bool) -> bool {
         self.match_id.as_deref() == Some(match_id)
+            && self.enriched
+            && !(ingame && !self.ingame)
     }
 
-    /// Replace the cache with freshly-fetched data for a match.
-    fn store(
-        &mut self,
-        match_id: String,
-        names: HashMap<String, String>,
-        mmr: HashMap<String, MmrResponse>,
-    ) {
-        self.match_id = Some(match_id);
-        self.names = names;
-        self.mmr = mmr;
+    /// Prepare the cache to (re)build `match_id` at `ingame`. Same-match data is KEPT so a
+    /// pregame→ingame upgrade — or a phase-1 cache being enriched, or a burst resumed after
+    /// an abort — reuses the already-fetched per-puuid rows and fetches only what's missing
+    /// (HIGH-1: do not redo the whole burst on the upgrade). A different match id drops the
+    /// stale data. `enriched` is reset so phase 2 runs again.
+    fn begin_match(&mut self, match_id: &str, ingame: bool) {
+        if self.match_id.as_deref() != Some(match_id) {
+            self.names.clear();
+            self.mmr.clear();
+            self.updates.clear();
+            self.headshots.clear();
+            self.skins.clear();
+        }
+        self.match_id = Some(match_id.to_string());
+        self.ingame = ingame;
+        self.enriched = false;
     }
 
     /// Drop everything (transition to MENUS / not-running).
     fn invalidate(&mut self) {
         *self = Self::default();
+    }
+}
+
+/// Session-lived HS% cache: puuid -> (newest competitive match id it was computed from,
+/// the HS%). Persists across matches (NOT cleared on MENUS) so it self-invalidates only
+/// when a player's newest competitive match changes.
+#[derive(Default)]
+struct HsCache {
+    map: HashMap<String, (String, Option<u32>)>,
+}
+
+impl HsCache {
+    /// Cached HS% for `puuid` iff it was computed from the same `newest_match_id`.
+    fn get(&self, puuid: &str, newest_match_id: &str) -> Option<Option<u32>> {
+        self.map
+            .get(puuid)
+            .filter(|(id, _)| id == newest_match_id)
+            .map(|(_, hs)| *hs)
+    }
+
+    fn put(&mut self, puuid: &str, newest_match_id: &str, hs: Option<u32>) {
+        self.map.insert(puuid.to_string(), (newest_match_id.to_string(), hs));
     }
 }
 
@@ -197,6 +277,7 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
         static_data,
         season_id,
         cache: MatchCache::default(),
+        hs_cache: HsCache::default(),
     })
 }
 
@@ -249,15 +330,26 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
         }
     });
 
-    // Initial snapshot from REST (BadClaims routed through the refresh arm — C7).
-    build_and_publish(session, state, emitter).await;
-
-    // React to state-change pushes.
-    while rx.recv().await.is_some() {
-        // Collapse a burst of pokes (many presence updates arriving at once, or a poke
-        // right behind a real event) into a single rebuild (L1).
-        while rx.try_recv().is_ok() {}
-        build_and_publish(session, state, emitter).await;
+    // Initial snapshot from REST, then react to state-change pushes. A build that was
+    // interrupted mid-enrichment (a poke arrived — possibly a dodge/transition) rebuilds at
+    // once for the current state instead of waiting on the next event, so transitions are
+    // never lost behind the burst (HIGH-2).
+    loop {
+        let interrupted = {
+            let mut ctx = BuildCtx { state, emitter, rx: &mut rx };
+            build_and_publish(session, &mut ctx).await
+        };
+        if interrupted {
+            while rx.try_recv().is_ok() {}
+            continue;
+        }
+        match rx.recv().await {
+            Some(()) => {
+                // Collapse a burst of pokes into a single rebuild (L1).
+                while rx.try_recv().is_ok() {}
+            }
+            None => break, // websocket task ended -> client gone
+        }
     }
 
     ws_task.abort();
@@ -265,32 +357,33 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
 
 /// Build a snapshot and publish it, routing BadClaims through a token refresh + one retry
 /// (C7) and NotReady through a "Loading..." placeholder. Shared by the initial paint and
-/// the event loop so both handle token expiry identically.
-async fn build_and_publish(
-    session: &mut Session,
-    state: &Arc<TrackerState>,
-    emitter: &Arc<dyn Emitter>,
-) {
-    match build_snapshot(session).await {
-        Ok(snap) => publish(state, emitter, snap),
-        Err(Error::NotReady) => publish(
-            state,
-            emitter,
-            TrackerSnapshot::not_running(Some("Loading...".into())),
-        ),
+/// the event loop so both handle token expiry identically. Returns true when the build was
+/// interrupted mid-enrichment and the caller should rebuild immediately (HIGH-2).
+async fn build_and_publish(session: &mut Session, ctx: &mut BuildCtx<'_>) -> bool {
+    match build_snapshot(session, ctx).await {
+        Ok(interrupted) => interrupted,
+        Err(Error::NotReady) => {
+            publish(
+                ctx.state,
+                ctx.emitter,
+                TrackerSnapshot::not_running(Some("Loading...".into())),
+            );
+            false
+        }
         Err(Error::BadClaims) => {
             if refresh_tokens(session).await.is_ok() {
-                if let Ok(snap) = build_snapshot(session).await {
-                    publish(state, emitter, snap);
-                }
+                build_snapshot(session, ctx).await.unwrap_or(false)
+            } else {
+                false
             }
         }
-        Err(_) => { /* transient (404 race, rate limit) — wait for the next event */ }
+        Err(_) => false, // transient (404 race, rate limit) — wait for the next event
     }
 }
 
-/// Build a full snapshot for the current state (Menus / Pregame / Ingame).
-async fn build_snapshot(session: &mut Session) -> Result<TrackerSnapshot> {
+/// Build (and publish) a full snapshot for the current state (Menus / Pregame / Ingame).
+/// Returns true if enrichment was interrupted (see `build_and_publish`).
+async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result<bool> {
     let presences = session.local.presences().await?;
     let own = presences
         .iter()
@@ -315,35 +408,45 @@ async fn build_snapshot(session: &mut Session) -> Result<TrackerSnapshot> {
 
     match info.session_state {
         Some(SessionLoopState::Pregame) => {
-            build_match_snapshot(session, &info, &parties, false).await
+            build_match_snapshot(session, &info, &parties, false, ctx).await
         }
         Some(SessionLoopState::Ingame) => {
-            build_match_snapshot(session, &info, &parties, true).await
+            build_match_snapshot(session, &info, &parties, true, ctx).await
         }
         // MENUS or unknown -> menus snapshot. A new match always starts from menus, so this
-        // is where per-match name/MMR cache is invalidated (L1 + pitfall §12).
+        // is where the per-match cache is invalidated (L1 + pitfall §12).
         _ => {
             session.cache.invalidate();
-            Ok(TrackerSnapshot {
-                status: AppStatus::Menus,
-                map: None,
-                mode: None,
-                own_team: None,
-                players: Vec::new(),
-                last_updated: crate::riot::types::now_millis(),
-                message: None,
-            })
+            publish(
+                ctx.state,
+                ctx.emitter,
+                TrackerSnapshot {
+                    status: AppStatus::Menus,
+                    map: None,
+                    mode: None,
+                    own_team: None,
+                    players: Vec::new(),
+                    last_updated: crate::riot::types::now_millis(),
+                    message: None,
+                },
+            );
+            Ok(false)
         }
     }
 }
 
-/// Fetch + assemble a pregame or coregame snapshot.
+/// Fetch + assemble a pregame or coregame snapshot, using the two-phase emit: the first
+/// snapshot carries names + ranks + RR + peak + WR (all free once names+MMR are in) with
+/// the heavy fields (rrChange / recentResults / headshotPercent / skins) empty; a second,
+/// enriched snapshot follows once those are fetched. Returns true if enrichment aborted on
+/// a mid-burst poke (HIGH-2).
 async fn build_match_snapshot(
     session: &mut Session,
     info: &PresenceInfo,
     parties: &HashMap<String, String>,
     ingame: bool,
-) -> Result<TrackerSnapshot> {
+    ctx: &mut BuildCtx<'_>,
+) -> Result<bool> {
     let own = session.own_puuid.clone();
 
     // Match id. On the RESOURCE_NOT_FOUND transition race, retry once — after ~5s for
@@ -367,15 +470,6 @@ async fn build_match_snapshot(
         (data.players, data.own_team, data.map_id)
     };
 
-    // Names + MMR: fetched once per match id, then served from cache for every subsequent
-    // in-match presence update (score changes each round must NOT refetch — L1).
-    if !session.cache.is_fresh_for(&match_id) {
-        let puuids: Vec<String> = players.iter().map(|p| p.puuid.clone()).collect();
-        let names = fetch_names(&session.remote, &puuids).await?;
-        let mmr = fetch_all_mmr(&session.remote, &puuids).await?;
-        session.cache.store(match_id, names, mmr);
-    }
-
     let status = if ingame { AppStatus::Ingame } else { AppStatus::Pregame };
     let mode = if info.is_custom_game() {
         Some("Custom Game".to_string())
@@ -384,18 +478,85 @@ async fn build_match_snapshot(
     };
     let map = session.static_data.map(map_id.as_deref());
 
+    // Fully cached (enriched, correct state) -> a single snapshot, no fetch. This is the
+    // common in-match path: the score changes every round but nothing here is refetched.
+    if session.cache.is_fresh_for(&match_id, ingame) {
+        let snap = assemble_snapshot(session, &players, parties, own_team, map, mode, status);
+        publish(ctx.state, ctx.emitter, snap);
+        return Ok(false);
+    }
+
+    // Not fresh: prepare the cache for this match (keeping any same-match data to reuse on a
+    // pregame→ingame upgrade), then proactively refresh the token before the burst so a
+    // BadClaims can't strand us mid-burst and force a redo (MEDIUM-2). Best-effort: if the
+    // refresh fails we proceed with the current token and the BadClaims arm still covers it.
+    session.cache.begin_match(&match_id, ingame);
+    let _ = refresh_tokens(session).await;
+
+    let puuids: Vec<String> = players.iter().map(|p| p.puuid.clone()).collect();
+
+    // === Phase 1: names + MMR (fast fields). Publish immediately. ===
+    fetch_phase1(&session.remote, &mut session.cache, &puuids).await?;
+    let snap1 = assemble_snapshot(
+        session,
+        &players,
+        parties,
+        own_team.clone(),
+        map.clone(),
+        mode.clone(),
+        status,
+    );
+    publish(ctx.state, ctx.emitter, snap1);
+
+    // === Phase 2: competitiveupdates + HS% + loadout skins. Interruptible. ===
+    let interrupted = fetch_phase2(
+        &session.remote,
+        &mut session.cache,
+        &mut session.hs_cache,
+        &puuids,
+        ingame,
+        &match_id,
+        ctx.rx,
+    )
+    .await?;
+    if interrupted {
+        // Phase-1 data stays cached (enriched == false) so the immediate rebuild reuses it
+        // and only finishes the missing phase-2 work.
+        return Ok(true);
+    }
+
+    session.cache.enriched = true;
+    let snap2 = assemble_snapshot(session, &players, parties, own_team, map, mode, status);
+    publish(ctx.state, ctx.emitter, snap2);
+    Ok(false)
+}
+
+/// Assemble a `TrackerSnapshot` from whatever the cache currently holds. Both phases and the
+/// fully-cached path go through here; the heavy fields are simply empty until phase 2 has
+/// populated the cache, so the phase-1 snapshot naturally carries null/empty stats.
+fn assemble_snapshot(
+    session: &Session,
+    players: &[MatchPlayer],
+    parties: &HashMap<String, String>,
+    own_team: Option<String>,
+    map: Option<MapInfo>,
+    mode: Option<String>,
+    status: AppStatus,
+) -> TrackerSnapshot {
     let rows = assemble_players(&AssembleInput {
-        players: &players,
+        players,
         names: &session.cache.names,
         mmr: &session.cache.mmr,
         parties,
+        updates: &session.cache.updates,
+        headshots: &session.cache.headshots,
+        skins: &session.cache.skins,
         static_data: &session.static_data,
-        own_puuid: &own,
+        own_puuid: &session.own_puuid,
         own_team: own_team.as_deref(),
         current_season_id: &session.season_id,
     });
-
-    Ok(TrackerSnapshot {
+    TrackerSnapshot {
         status,
         map,
         mode,
@@ -403,7 +564,7 @@ async fn build_match_snapshot(
         players: rows,
         last_updated: crate::riot::types::now_millis(),
         message: None,
-    })
+    }
 }
 
 /// Retry a fetch once on the RESOURCE_NOT_FOUND state-transition race (spec §10.5). `delay`
@@ -455,61 +616,252 @@ async fn fetch_names(remote: &RemoteClient, puuids: &[String]) -> Result<HashMap
     }
 }
 
-/// Fetch MMR for every player. A single player's failure degrades that row to Unranked,
-/// never the whole table (spec §10.14), but a BadClaims means our token is stale for all
-/// calls, so it propagates for the caller to refresh + retry once (C4).
-async fn fetch_all_mmr(
+/// A short pause between the per-player stat requests at match start (spec: bounded,
+/// sequential-ish burst) — works alongside the existing 429 retry.
+fn inter_request_delay() -> Duration {
+    Duration::from_millis(INTER_REQUEST_DELAY_MS)
+}
+
+/// Phase 1 of the two-phase emit: resolve names (batch) + MMR (per player) into the cache,
+/// fetching only the puuids not already cached from a same-match pregame build (HIGH-1
+/// reuse). MMR is the WR source too, so this covers every "free" field. BadClaims
+/// propagates for the shared token refresh (C4/C7); a single MMR failure degrades that row
+/// to Unranked. The inter-request delay is applied only BETWEEN requests (LOW: no trailing
+/// sleep), and now covers the MMR fetches too (LOW: consistency with the spec's per-player
+/// 120 ms).
+async fn fetch_phase1(
     remote: &RemoteClient,
+    cache: &mut MatchCache,
     puuids: &[String],
-) -> Result<HashMap<String, MmrResponse>> {
-    let mut out = HashMap::new();
-    for puuid in puuids {
+) -> Result<()> {
+    // Names: one batch call for the puuids we don't already hold.
+    let missing_names: Vec<String> = puuids
+        .iter()
+        .filter(|p| !cache.names.contains_key(*p))
+        .cloned()
+        .collect();
+    if !missing_names.is_empty() {
+        let fetched = fetch_names(remote, &missing_names).await?;
+        cache.names.extend(fetched);
+    }
+
+    // MMR: per player, only the ones missing, spaced between requests.
+    let missing_mmr: Vec<String> = puuids
+        .iter()
+        .filter(|p| !cache.mmr.contains_key(*p))
+        .cloned()
+        .collect();
+    for (i, puuid) in missing_mmr.iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(inter_request_delay()).await;
+        }
         match with_rate_limit_retry(|| remote.mmr(puuid)).await {
             Ok(v) => {
-                out.insert(puuid.clone(), parse_mmr(v));
+                cache.mmr.insert(puuid.clone(), parse_mmr(v));
             }
             Err(Error::BadClaims) => return Err(Error::BadClaims),
             Err(_) => { /* private profile / hiccup -> Unranked for this row only */ }
         }
     }
-    Ok(out)
+    Ok(())
+}
+
+/// Phase 2 of the two-phase emit: competitiveupdates (ΔRR + last-5 + recent match ids),
+/// HS% (throttled + session-cached), and — INGAME only — loadout skins. Only puuids not
+/// already cached are fetched (HIGH-1 reuse of pregame data + resume-after-abort). Between
+/// per-player requests it checks the poke channel and returns `Ok(true)` to abort promptly
+/// when a new presence event arrives, so a dodge/transition is not blocked behind the
+/// remaining fetches (HIGH-2). Partial results are left in the cache so the rebuild only
+/// finishes the missing work. BadClaims propagates for the shared refresh; other per-player
+/// failures degrade that field only. The inter-request delay spaces requests only BETWEEN
+/// them (LOW: no trailing sleep, none after a skip/cache-hit).
+async fn fetch_phase2(
+    remote: &RemoteClient,
+    cache: &mut MatchCache,
+    hs_cache: &mut HsCache,
+    puuids: &[String],
+    ingame: bool,
+    match_id: &str,
+    rx: &mut mpsc::Receiver<()>,
+) -> Result<bool> {
+    // Tracks whether any request has been issued yet, so the 120 ms delay only ever sits
+    // *between* two real requests across the whole phase.
+    let mut sent_any = false;
+
+    // competitiveupdates: one request per player missing history.
+    let missing_updates: Vec<String> = puuids
+        .iter()
+        .filter(|p| !cache.updates.contains_key(*p))
+        .cloned()
+        .collect();
+    for puuid in &missing_updates {
+        if poke_pending(rx) {
+            return Ok(true);
+        }
+        if sent_any {
+            tokio::time::sleep(inter_request_delay()).await;
+        }
+        sent_any = true;
+        match with_rate_limit_retry(|| remote.competitive_updates(puuid)).await {
+            Ok(v) => {
+                cache.updates.insert(puuid.clone(), stats::parse_competitive_updates(v));
+            }
+            Err(Error::BadClaims) => return Err(Error::BadClaims),
+            Err(_) => { /* no history for this row */ }
+        }
+    }
+
+    // HS%: up to RECENT_MATCHES_FOR_HS match-details per player missing it, session-cached.
+    for puuid in puuids {
+        if cache.headshots.contains_key(puuid) {
+            continue;
+        }
+        if poke_pending(rx) {
+            return Ok(true);
+        }
+        let Some(newest) = cache.updates.get(puuid).and_then(|h| h.newest_match_id()) else {
+            // No recent competitive matches -> HS% is "N/a".
+            cache.headshots.insert(puuid.clone(), None);
+            continue;
+        };
+        // Session cache hit (same newest match) -> reuse, no match-details fetch.
+        if let Some(hs) = hs_cache.get(puuid, newest) {
+            cache.headshots.insert(puuid.clone(), hs);
+            continue;
+        }
+        // Cache miss -> fetch up to N match-details and accumulate this player's hits.
+        let newest = newest.to_string();
+        let match_ids = cache
+            .updates
+            .get(puuid)
+            .map(|h| h.recent_match_ids.clone())
+            .unwrap_or_default();
+        let mut acc = HitCounts::default();
+        for mid in &match_ids {
+            if poke_pending(rx) {
+                return Ok(true);
+            }
+            if sent_any {
+                tokio::time::sleep(inter_request_delay()).await;
+            }
+            sent_any = true;
+            match with_rate_limit_retry(|| remote.match_details(mid)).await {
+                Ok(v) => stats::accumulate_match_hits(&mut acc, &v, puuid),
+                Err(Error::BadClaims) => return Err(Error::BadClaims),
+                Err(_) => { /* skip this match, keep whatever we have */ }
+            }
+        }
+        let hs = acc.headshot_percent();
+        hs_cache.put(puuid, &newest, hs);
+        cache.headshots.insert(puuid.clone(), hs);
+    }
+
+    // Loadout skins: one request per match, INGAME only.
+    if ingame && cache.skins.is_empty() {
+        if poke_pending(rx) {
+            return Ok(true);
+        }
+        match with_rate_limit_retry(|| remote.coregame_loadouts(match_id)).await {
+            Ok(v) => {
+                cache.skins = loadout::parse_loadouts(&v);
+            }
+            Err(Error::BadClaims) => return Err(Error::BadClaims),
+            Err(_) => { /* no skins this match */ }
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn names(id: &str) -> HashMap<String, String> {
-        let mut m = HashMap::new();
-        m.insert(id.to_string(), format!("{id}#1"));
-        m
+    #[test]
+    fn empty_cache_is_never_fresh() {
+        let c = MatchCache::default();
+        assert!(!c.is_fresh_for("m", false));
+        assert!(!c.is_fresh_for("m", true));
     }
 
     #[test]
-    fn cache_serves_same_match_and_refetches_on_new_match() {
-        let mut cache = MatchCache::default();
-        // Empty cache is never fresh (first snapshot of any match must fetch).
-        assert!(!cache.is_fresh_for("match-a"));
-
-        cache.store("match-a".to_string(), names("p"), HashMap::new());
-        // Same match id -> reuse (an in-match presence update must NOT refetch).
-        assert!(cache.is_fresh_for("match-a"));
-        assert_eq!(cache.names.get("p").map(String::as_str), Some("p#1"));
-
-        // A different match id -> stale, forcing a refetch.
-        assert!(!cache.is_fresh_for("match-b"));
+    fn fresh_only_when_enriched_same_match_and_state() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", false);
+        // Phase-1 only (not yet enriched) -> still must run phase 2.
+        assert!(!c.is_fresh_for("m", false));
+        c.enriched = true;
+        assert!(c.is_fresh_for("m", false)); // same match + state, enriched
+        assert!(!c.is_fresh_for("other", false)); // different match
     }
 
     #[test]
-    fn invalidate_forces_refetch() {
-        let mut cache = MatchCache::default();
-        cache.store("match-a".to_string(), names("p"), HashMap::new());
-        assert!(cache.is_fresh_for("match-a"));
+    fn pregame_cache_is_stale_when_ingame() {
+        // HIGH-1 core rule: pregame and coregame share the same match GUID, but a cache
+        // built in PREGAME lacks the enemy team and every loadout, so it must NOT be reused
+        // in INGAME.
+        let mut c = MatchCache::default();
+        c.begin_match("m", false); // built in PREGAME
+        c.enriched = true;
+        assert!(!c.is_fresh_for("m", true), "pregame cache must be stale once INGAME");
+        // ...but stays fresh while we remain in pregame.
+        assert!(c.is_fresh_for("m", false));
+    }
 
-        // Transition to MENUS clears the cache (pitfall §12 / L1).
-        cache.invalidate();
-        assert!(!cache.is_fresh_for("match-a"));
-        assert!(cache.names.is_empty());
-        assert!(cache.mmr.is_empty());
+    #[test]
+    fn ingame_cache_stays_fresh_ingame() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", true);
+        c.enriched = true;
+        assert!(c.is_fresh_for("m", true));
+    }
+
+    #[test]
+    fn begin_match_reuses_same_match_data_and_resets_enriched() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", false);
+        c.names.insert("ally".into(), "Ally#1".into());
+        c.mmr.insert("ally".into(), MmrResponse::default());
+        c.enriched = true;
+
+        // pregame→ingame upgrade for the SAME match: keep the already-fetched ally row, but
+        // force phase 2 to run again (enemies + loadouts still missing).
+        c.begin_match("m", true);
+        assert_eq!(c.names.get("ally").map(String::as_str), Some("Ally#1"));
+        assert!(c.mmr.contains_key("ally"));
+        assert!(!c.enriched);
+        assert!(c.ingame);
+
+        // A different match id drops everything.
+        c.begin_match("other", true);
+        assert!(c.names.is_empty());
+        assert!(c.mmr.is_empty());
+    }
+
+    #[test]
+    fn invalidate_clears_everything() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", true);
+        c.names.insert("p".into(), "x".into());
+        c.enriched = true;
+        c.invalidate();
+        assert!(!c.is_fresh_for("m", true));
+        assert!(c.names.is_empty());
+        assert_eq!(c.match_id, None);
+    }
+
+    #[test]
+    fn hs_cache_hits_only_on_matching_newest_match() {
+        let mut hs = HsCache::default();
+        // Miss when empty.
+        assert_eq!(hs.get("p", "m1"), None);
+
+        hs.put("p", "m1", Some(25));
+        // Hit only when the newest match id matches -> no re-download of match-details.
+        assert_eq!(hs.get("p", "m1"), Some(Some(25)));
+        // A newer match for the same player -> miss (must recompute).
+        assert_eq!(hs.get("p", "m2"), None);
+        // Persists across matches (not cleared with the per-match cache).
+        assert_eq!(hs.get("p", "m1"), Some(Some(25)));
     }
 }

@@ -10,7 +10,7 @@ Lightweight desktop app showing an in-match player table (ranks, RR, peak rank, 
 
 - `docs/project-context.md` — decisions made, scope, current status, next steps. **Start here.**
 - `docs/data-sources.md` — where match/player data comes from and reference material.
-- `docs/ui-spec.md` — agreed UI baseline. Contains a process gate: Claude never implements UI or spawns UI subagents — it writes a ready-to-paste agent prompt and the user runs it with their own model.
+- `docs/ui-spec.md` — agreed UI baseline. Contains a process gate: Claude never implements UI or spawns UI subagents — it writes a ready-to-paste agent prompt and the user runs it themselves (their choice of model + higher effort).
 - `docs/roadmap.md` — later work (release pipeline: portable single exe via GitHub Actions, no auto-updater yet) and rejected ideas.
 - `docs/maintenance.md` — vRY upstream check procedure + last-checked commit hash. Use when the user asks to "check vRY" / "maintain".
 

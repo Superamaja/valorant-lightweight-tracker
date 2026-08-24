@@ -30,10 +30,20 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
 2. ~~Scaffold project.~~ Done — see Repo layout below.
 3. ~~Implement lockfile + local API auth, then presence → player list → ranks pipeline.~~
    **Done — Rust backend implemented in `src-tauri/src/riot/` + `app_state.rs`.** All parsing
-   is pure and unit-tested (63 tests). Exposes two Tauri commands (`start_tracker`,
+   is pure and unit-tested. Exposes two Tauri commands (`start_tracker`,
    `get_tracker_state`) and one event (`tracker-state`). The exact TS-facing contract is in
-   `docs/ipc-contract.md`. `cargo check` / `cargo test` / `cargo clippy -- -D warnings` all
-   pass; `pnpm build` still passes (frontend untouched).
+   `docs/ipc-contract.md`.
+3a. ~~**Phase 2 — per-player stats.**~~ **Done.** Added the five `ui-spec.md` tier-2 columns:
+   WR (free from phase-1 MMR), ΔRR + last-5 W/L (competitiveupdates), HS% (match-details,
+   reusing competitiveupdates match ids; session-cached per puuid+newest-match), and
+   Vandal/Phantom skins (coregame loadouts + valorant-api skin cache). New modules
+   `riot/stats.rs`, `riot/loadout.rs`. Backend now also **owns row ordering** (ally block
+   first, self first, deterministic name/puuid tiebreak; UI colours by `isAlly` only). New
+   `PlayerRow` fields documented in `docs/ipc-contract.md`; phase-2 notes + request-count math
+   in `docs/backend-spec.md`. 86 unit tests. `cargo check` / `cargo test` /
+   `cargo clippy --all-targets -- -D warnings` all pass; `pnpm build` still passes (frontend
+   untouched). Live-verification open items for the full-lobby stat burst are listed in the
+   backend spec.
 4. **Next: UI.** Per the `ui-spec.md` process gate, the UI is built by a separate agent the
    **user** runs. That agent builds against `docs/ipc-contract.md` (event + command shapes)
    and touches only `src/` (React/Tailwind). Do not implement UI here.
@@ -77,10 +87,12 @@ Scaffolded with `pnpm create tauri-app` (react-ts template), files at the repo r
             ├── presence.rs    # decode private presence (nested + flat), party grouping
             ├── match_state.rs # pregame/coregame player extraction
             ├── names.rs       # batch name-service resolution
-            ├── rank.rs        # MMR parse, current/peak rank, before-ascendant tier shift
+            ├── rank.rs        # MMR parse, current/peak rank, before-ascendant tier shift, win rate
+            ├── stats.rs       # phase 2: competitiveupdates (ΔRR + last-5) + match-details HS% math
+            ├── loadout.rs     # phase 2: coregame loadouts -> Vandal/Phantom skin ids
             ├── content.rs     # content-service season list (current/previous act)
-            ├── static_data.rs # valorant-api fetch + version-keyed disk cache + lookups
-            └── assemble.rs    # combine everything into display-ready PlayerRows
+            ├── static_data.rs # valorant-api fetch + version-keyed disk cache + lookups (+ skins)
+            └── assemble.rs    # display-ready PlayerRows (privacy, stats, guaranteed row order)
 ```
 
 Frontend styling uses Tailwind CSS v4 via the Vite plugin (`@tailwindcss/vite`) — no
