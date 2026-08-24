@@ -1,12 +1,12 @@
 # Valorant Lightweight Tracker
 
 A lightweight Windows desktop app that shows an **in-match player table** for
-your current VALORANT match — everyone's rank, RR, peak rank, level, agent, and
-per-player stats — in a clean, image-first GUI instead of a console window.
+your current VALORANT match: everyone's rank, RR, peak rank, level, agent, and
+per-player stats in a clean, image-first GUI instead of a console window.
 
-Think [VALORANT-rank-yoinker](https://github.com/mdevio/VALORANT-rank-yoinker)
-(vRY), but as a real app: a small native window, agent and rank art, and a
-two-team table that fills in as the lobby loads.
+<!-- App screenshot goes here once ready:
+![Valorant Lightweight Tracker showing an in-match player table](docs/assets/app-screenshot.png)
+-->
 
 ## Download
 
@@ -14,7 +14,7 @@ Grab the latest portable build from the
 [**Releases page**](https://github.com/Superamaja/valorant-lightweight-tracker/releases):
 
 1. Download `valorant-lightweight-tracker-vX.Y.Z.exe`.
-2. Run it. There is **no installer** — the single `.exe` is the whole app.
+2. Run it. There is **no installer**; the single `.exe` is the whole app.
 
 ### "Windows protected your PC" (SmartScreen)
 
@@ -25,10 +25,10 @@ apps; the source is in this repo if you'd rather build it yourself.)
 ## Requirements
 
 - **Windows 10 or 11**
-- **WebView2 runtime** — preinstalled on current Windows; if missing, get it
+- **WebView2 runtime**, preinstalled on current Windows. If missing, get it
   from Microsoft's [Evergreen WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)
   page.
-- **VALORANT running** — the app reads your local Riot client. Launch the game
+- **VALORANT running**. The app reads your local Riot client. Launch the game
   (menu is enough), then start the tracker; it will wait until a match begins.
 
 ## Build from source
@@ -57,7 +57,7 @@ time. **Use at your own risk.**
 ## Credits
 
 - [**VALORANT-rank-yoinker**](https://github.com/mdevio/VALORANT-rank-yoinker)
-  (ISC) — the reference implementation for data correctness. This app builds its
+  (ISC), the reference implementation for data correctness. This app builds its
   own backend but follows vRY's approach to the Riot endpoints.
-- [**valorant-api.com**](https://valorant-api.com/) — free, no-key source for all
-  static assets (agent, rank, and skin names and imagery).
+- [**valorant-api.com**](https://valorant-api.com/), a free, no-key source for
+  all static assets (agent, rank, and skin names and imagery).

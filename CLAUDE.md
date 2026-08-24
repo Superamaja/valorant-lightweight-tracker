@@ -19,4 +19,6 @@ Lightweight desktop app showing an in-match player table (ranks, RR, peak rank, 
 - vRY (https://github.com/mdevio/VALORANT-rank-yoinker) is the **reference implementation** for data correctness. When our numbers disagree with vRY, vRY is right until proven otherwise.
 - Do NOT reuse logic from ValoTracker (https://github.com/Londopy/ValoTracker) — user verified its data is wrong.
 - Scope: in-match player table only. Discord RPC is a possible future feature — keep the architecture open to it, but do not build it.
+- README.md must NEVER contain em-dashes. Rewrite the sentence or use other punctuation (colons, commas, periods, parentheses).
+- Commit messages must never mention Claude, model names (Fable/Opus/Sonnet), or session links.
 - After every implementation pass (agent or inline), run a Fable-model code review before the work is considered done. Review targets: correctness vs docs/backend-spec.md, code quality (DRY, SoC, naming), and lightweightness (no unnecessary dependencies, no wasted allocations/requests — this app's whole point is being lightweight).
