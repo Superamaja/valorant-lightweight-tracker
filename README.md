@@ -38,14 +38,14 @@ Requires [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/) and the
 prerequisites).
 
 ```sh
-pnpm install        # install frontend dependencies
-pnpm tauri dev      # run the app in development (hot reload)
-pnpm tauri build    # produce a release build
+pnpm install                    # install frontend dependencies
+pnpm tauri dev                  # run the app in development (hot reload)
+pnpm tauri build --no-bundle    # build the portable exe
 ```
 
-For a portable exe with no installer bundle, use `pnpm tauri build --no-bundle`
-(this is what the release workflow does). See
-[`docs/release.md`](docs/release.md) for how tagged releases are built.
+The exe lands in `src-tauri/target/release/`. This is the same build the
+release workflow runs; see [`docs/release.md`](docs/release.md) for how tagged
+releases are built.
 
 ## Disclaimer
 
