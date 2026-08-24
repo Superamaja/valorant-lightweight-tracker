@@ -54,8 +54,11 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 input.names.get(&p.puuid).cloned()
             };
 
-            // Account level: shown to self + own party regardless; otherwise gated by flag.
-            let level_visible = !p.hide_account_level || is_self || is_party_of_self;
+            // Account level: shown to self + own party regardless; otherwise withheld when
+            // the player is incognito OR set "hide my level" (contract: level is withheld for
+            // incognito players too, not just the hide-level flag).
+            let level_visible =
+                (!p.incognito && !p.hide_account_level) || is_self || is_party_of_self;
             let account_level = if level_visible { Some(p.account_level) } else { None };
 
             // Ranks + WR (all from the same MMR payload — no extra request for WR).
@@ -220,6 +223,20 @@ mod tests {
         assert_eq!(row(&rows, "me").name.as_deref(), Some("Me#1")); // self visible
         assert_eq!(row(&rows, "foe").name, None); // incognito enemy hidden
         assert!(row(&rows, "foe").incognito);
+    }
+
+    #[test]
+    fn incognito_hides_account_level_except_for_self() {
+        // Incognito withholds accountLevel too (contract), independent of hide_account_level.
+        let mut me = base_player("me", "Blue");
+        me.incognito = true;
+        let mut foe = base_player("foe", "Red"); // incognito, hide_account_level == false
+        foe.incognito = true;
+        let players = vec![me, foe];
+        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        assert_eq!(row(&rows, "me").account_level, Some(100)); // self always sees own level
+        assert_eq!(row(&rows, "foe").account_level, None); // incognito enemy level withheld
     }
 
     #[test]

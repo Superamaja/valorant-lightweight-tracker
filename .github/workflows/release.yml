@@ -1,0 +1,71 @@
+name: Release
+
+# Build the portable Windows exe and attach it to a GitHub Release whenever a
+# version tag (v*) is pushed. See docs/release.md for the release workflow.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# The gh-release step needs write access to create the release + upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # --no-bundle builds the release exe only (no NSIS/MSI installers). The
+      # frontend build runs automatically via tauri.conf.json beforeBuildCommand.
+      - name: Build release exe
+        run: pnpm tauri build --no-bundle
+
+      - name: Stage portable exe
+        id: stage
+        run: |
+          $exe = "src-tauri/target/release/valorant-lightweight-tracker.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Expected build output not found: $exe"
+          }
+          $asset = "valorant-lightweight-tracker-${{ github.ref_name }}.exe"
+          New-Item -ItemType Directory -Force -Path dist-release | Out-Null
+          Copy-Item $exe "dist-release/$asset"
+          "asset_path=dist-release/$asset" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.stage.outputs.asset_path }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

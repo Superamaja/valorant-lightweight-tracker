@@ -542,6 +542,35 @@ Applied after a Fable review of the phase-2 cut (`app_state.rs` + a few pure hel
 - **Row-order key (LOW).** `assemble::order_rows` uses `sort_by_cached_key` so each row's
   lowercased-name key is computed once, not per pairwise comparison.
 
+### Contract-alignment pass (2026-08-24)
+
+Three backend/doc mismatches flagged by the UI builder against `ipc-contract.md`, fixed on the
+backend side (`ipc-contract.md` updated to match):
+
+- **`enriched` flag on `TrackerSnapshot` (new field).** Added `enriched: bool` (serde
+  `enriched`) so the UI keys loading skeletons off an explicit flag instead of inferring "still
+  loading" from data absence. It is `false` **only** on the fast phase-1 snapshot of a match
+  whose heavy stats are still being fetched; `true` on the enriched phase-2 snapshot, on a
+  re-entry snapshot of an already-loaded match (the fully-cached path), and on every non-match
+  state (Menus / ValorantNotRunning, where there are no players). Wired through
+  `app_state::assemble_snapshot` (new `enriched` param: `false` for phase 1, `true` for the
+  enriched and fully-cached publishes) and set `true` in the Menus and `not_running`
+  constructors. The two snapshots already differed on their heavy fields, so this rides the
+  existing dedup unchanged.
+- **Incognito `accountLevel`.** `assemble.rs` previously withheld the level only on the
+  `hide_account_level` flag; the contract also withholds it for incognito players. `level_visible`
+  is now `(!incognito && !hide_account_level) || is_self || is_party_of_self` — the self row is
+  never nulled regardless of flags, and party members still always see the real level. Unit test
+  `incognito_hides_account_level_except_for_self` added (self+incognito keeps its level, non-self
+  incognito → null). Wire caveat documented in `ipc-contract.md`: Riot itself zeroes coregame
+  `PlayerIdentity.AccountLevel` when the hide flag is set (even for self), so a self level may
+  still read `0` in-match off the wire; the backend passes it straight through and does **not**
+  backfill from MENUS presence.
+- **`agentSelectionState` is a raw string, not an enum.** No code change — the Rust type was
+  already `Option<String>` passing Riot's `CharacterSelectionState` straight through.
+  `ipc-contract.md` corrected to document it as `string | null` with `"locked"`/`"selected"` as
+  the known values and other strings possible.
+
 ### TLS
 
 - Local HTTPS client (`reqwest`) and the local websocket (`tokio-tungstenite` + `native-tls`)

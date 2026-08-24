@@ -426,6 +426,7 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
                     mode: None,
                     own_team: None,
                     players: Vec::new(),
+                    enriched: true,
                     last_updated: crate::riot::types::now_millis(),
                     message: None,
                 },
@@ -481,7 +482,7 @@ async fn build_match_snapshot(
     // Fully cached (enriched, correct state) -> a single snapshot, no fetch. This is the
     // common in-match path: the score changes every round but nothing here is refetched.
     if session.cache.is_fresh_for(&match_id, ingame) {
-        let snap = assemble_snapshot(session, &players, parties, own_team, map, mode, status);
+        let snap = assemble_snapshot(session, &players, parties, own_team, map, mode, status, true);
         publish(ctx.state, ctx.emitter, snap);
         return Ok(false);
     }
@@ -505,6 +506,7 @@ async fn build_match_snapshot(
         map.clone(),
         mode.clone(),
         status,
+        false,
     );
     publish(ctx.state, ctx.emitter, snap1);
 
@@ -526,7 +528,7 @@ async fn build_match_snapshot(
     }
 
     session.cache.enriched = true;
-    let snap2 = assemble_snapshot(session, &players, parties, own_team, map, mode, status);
+    let snap2 = assemble_snapshot(session, &players, parties, own_team, map, mode, status, true);
     publish(ctx.state, ctx.emitter, snap2);
     Ok(false)
 }
@@ -534,6 +536,8 @@ async fn build_match_snapshot(
 /// Assemble a `TrackerSnapshot` from whatever the cache currently holds. Both phases and the
 /// fully-cached path go through here; the heavy fields are simply empty until phase 2 has
 /// populated the cache, so the phase-1 snapshot naturally carries null/empty stats.
+#[allow(clippy::too_many_arguments)] // cohesive snapshot fields; grouping them would add an
+// unrequested struct for no real gain.
 fn assemble_snapshot(
     session: &Session,
     players: &[MatchPlayer],
@@ -542,6 +546,7 @@ fn assemble_snapshot(
     map: Option<MapInfo>,
     mode: Option<String>,
     status: AppStatus,
+    enriched: bool,
 ) -> TrackerSnapshot {
     let rows = assemble_players(&AssembleInput {
         players,
@@ -562,6 +567,7 @@ fn assemble_snapshot(
         mode,
         own_team,
         players: rows,
+        enriched,
         last_updated: crate::riot::types::now_millis(),
         message: None,
     }

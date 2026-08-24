@@ -1,1 +1,61 @@
 @import "tailwindcss";
+
+@theme {
+  /* Near-black surfaces; one red/coral accent. Everything else is neutral. */
+  --color-base: #08080a;
+  --color-edge: #1c1c21;
+  --color-accent: #ff4655;
+
+  /* Team tints — ally is always blue, enemy always red. */
+  --color-ally: #4a8fff;
+  --color-enemy: #ff4655;
+
+  /* Result signals, kept desaturated. */
+  --color-win: #4bd08a;
+  --color-loss: #e05a6b;
+
+  --animate-pulse-ring: pulse-ring 2.8s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-base);
+  color: #e5e5e5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #26262c;
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #35353d;
+  background-clip: content-box;
+}

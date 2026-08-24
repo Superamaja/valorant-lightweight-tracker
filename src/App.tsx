@@ -1,30 +1,55 @@
-function App() {
-  return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        <header className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Valorant Lightweight Tracker
-          </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            In-match player table for your current game.
-          </p>
-        </header>
+import { Header } from "./components/Header";
+import { PlayerTable } from "./components/PlayerTable";
+import { StatusScreen } from "./components/StatusScreen";
+import { useTracker } from "./hooks/useTracker";
+import type { TrackerSnapshot } from "./ipc/types";
 
-        <section
-          aria-label="Player table"
-          className="rounded-lg border border-neutral-800 bg-neutral-900/50"
-        >
-          <div className="border-b border-neutral-800 px-4 py-3 text-sm font-medium text-neutral-300">
-            Players
-          </div>
-          <div className="flex h-64 items-center justify-center px-4 text-sm text-neutral-500">
-            No match detected. Player table will appear here.
-          </div>
-        </section>
-      </div>
-    </main>
-  );
+/** Status drives the whole layout — the table only exists inside a match. */
+function screen(snapshot: TrackerSnapshot | null, error: string | null) {
+  if (error) {
+    return <StatusScreen tone="error" title="The tracker stopped" subtitle={error} />;
+  }
+  if (!snapshot) {
+    return (
+      <StatusScreen tone="live" title="Starting" subtitle="Looking for the Valorant client." />
+    );
+  }
+
+  switch (snapshot.status) {
+    case "ValorantNotRunning":
+      return (
+        <StatusScreen
+          tone="idle"
+          title="Waiting for VALORANT"
+          subtitle={snapshot.message ?? "Start the game — the tracker connects on its own."}
+        />
+      );
+    case "Menus":
+      return (
+        <StatusScreen
+          tone="live"
+          title="Waiting for a match"
+          subtitle={
+            snapshot.message ?? "Connected. The table fills in the moment agent select opens."
+          }
+        />
+      );
+    default:
+      return snapshot.players.length > 0 ? (
+        <PlayerTable snapshot={snapshot} />
+      ) : (
+        <StatusScreen tone="live" title="Loading the lobby" subtitle={snapshot.message} />
+      );
+  }
 }
 
-export default App;
+export default function App() {
+  const { snapshot, error } = useTracker();
+
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-base text-neutral-200 select-none">
+      <Header snapshot={snapshot} />
+      <main className="min-h-0 flex-1 overflow-auto">{screen(snapshot, error)}</main>
+    </div>
+  );
+}

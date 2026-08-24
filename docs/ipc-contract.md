@@ -54,10 +54,13 @@ sequential fetching, so the backend does not make the UI wait for them):
    `headshotPercent`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
 
 The UI **must render the fast snapshot immediately** and let those fields fill in on the
-enriched event — treat a `null`/empty heavy field as "still loading" during a match, not as
-"no data". (If a player genuinely has no recent competitive matches, the enriched snapshot
-still carries `null`/`[]` for them — the two are indistinguishable from the UI's side, which
-is fine: render the same "N/A" placeholder either way.) Re-entering an already-loaded match
+enriched event. **Key loading skeletons on the snapshot's `enriched` flag: `enriched === false`
+is the fast phase-1 snapshot (show skeletons for the heavy fields); `enriched === true` means
+the heavy fields are final.** This supersedes the previous inference of "still loading" from
+data absence (treating a snapshot where no row had any heavy stat as the fast one) — that
+heuristic is no longer needed and must not be used. Once `enriched === true`, a `null`/empty
+heavy field means the player genuinely has no data for it (render the "N/A" placeholder), not
+"still loading". Re-entering an already-loaded match
 (the score changes each round) emits a **single** already-enriched snapshot. A Pregame→Ingame
 transition re-runs the two phases for the now-visible enemy team. All of this rides the
 existing dedup, so listeners need no special handling beyond expecting stats to arrive on a
@@ -99,6 +102,9 @@ interface TrackerSnapshot {
   mode: string | null;          // display mode name (see below); null outside a match
   ownTeam: string | null;       // local player's team id ("Red"|"Blue"); null outside a match
   players: PlayerRow[];         // [] in Menus / ValorantNotRunning
+  enriched: boolean;            // false ONLY on the fast phase-1 snapshot (heavy stats still
+                                // loading); true on the enriched snapshot, on re-entry to an
+                                // already-loaded match, and on all non-match states
   lastUpdated: number;          // epoch milliseconds this snapshot was produced
   message: string | null;       // optional status line, e.g. "Waiting for Valorant..."
 }
@@ -118,7 +124,9 @@ interface PlayerRow {
   isAlly: boolean;              // on the local player's team
   isSelf: boolean;              // this row is the local player
   agent: AgentInfo | null;      // null when not yet selected (pregame) / unresolved
-  agentSelectionState: string | null; // pregame only: "locked" | "selected" | null
+  agentSelectionState: string | null; // pregame only; Riot's raw CharacterSelectionState
+                                       // passed through. Known values "locked" | "selected";
+                                       // other strings possible. null outside pregame
   currentRank: RankInfo;        // current competitive rank
   rr: number;                   // ranked rating 0–100 (0 when unranked)
   leaderboardRank: number;      // leaderboard position; nonzero only for Ascendant+ top players
@@ -182,11 +190,20 @@ interface RankInfo {
   pass through as their raw string.
 - **`name` = null** when `incognito` is true (except for your own row) or the name-service did
   not return a name. Always guard for null and render a placeholder.
-- **`accountLevel` = null** when the player set "hide my level" AND they are neither you nor a
-  member of your party. You and your party members always see the real level.
-- **`agent` = null / `agentSelectionState`** — during Pregame a teammate who hasn't locked yet
-  has `agent: null` and `agentSelectionState: "selected"` (still picking) or `null`. Once
-  locked, `agent` is populated and `agentSelectionState: "locked"`.
+- **`accountLevel` = null** when the player is incognito, OR set "hide my level" — in either
+  case only when they are neither you nor a member of your party. You and your party members
+  always see the real level (the backend never nulls the self row). **Wire caveat:** Riot
+  itself zeroes `AccountLevel` in the coregame `PlayerIdentity` when the hide-level flag is set,
+  even for your own row, so an in-match self level may read `0` off the wire; your MENUS
+  presence carries the real level. The backend passes the self level straight through — it does
+  not backfill from presence — so treat a self `accountLevel` of `0` in-match as "hidden by
+  Riot", not a real level-0 account.
+- **`agent` = null / `agentSelectionState`** — `agentSelectionState` is Riot's raw
+  `CharacterSelectionState` string passed straight through (**not** a closed enum): type it as
+  `string | null`. `"locked"` and `"selected"` are the known values, but treat any other string
+  as possible. During Pregame a teammate who hasn't locked yet has `agent: null` and
+  `agentSelectionState: "selected"` (still picking) or `null`; once locked, `agent` is populated
+  and `agentSelectionState: "locked"`. It is `null` outside Pregame.
 - **Ranks never error a row.** A private profile / new account / API hiccup yields
   `tier: 0, name: "Unranked", iconUrl: null` and `rr: 0` for that player only.
 - **`peakRank`** already accounts for the pre-Ascendant tier renumbering — treat `tier` as a

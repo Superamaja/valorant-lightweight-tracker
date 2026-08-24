@@ -44,13 +44,21 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    `cargo clippy --all-targets -- -D warnings` all pass; `pnpm build` still passes (frontend
    untouched). Live-verification open items for the full-lobby stat burst are listed in the
    backend spec.
-4. **Next: UI.** Per the `ui-spec.md` process gate, the UI is built by a separate agent the
-   **user** runs. That agent builds against `docs/ipc-contract.md` (event + command shapes)
-   and touches only `src/` (React/Tailwind). Do not implement UI here.
+4. ~~**UI.**~~ **Done — built from `docs/ui-agent-prompt.md` in a user-run session.** `src/`
+   now holds the whole frontend: IPC wiring (`src/ipc/`, `src/hooks/useTracker.ts`), the
+   two-team player table with all eleven columns, and the non-match state screens. Only
+   `src/` and `index.html` were touched. `pnpm build` (tsc + vite) passes; `pnpm tauri dev`
+   opens the window and shows "Waiting for VALORANT" with the game closed. Layout decisions
+   and the points flagged against the IPC contract: `docs/ui-spec.md` -> "Implemented (v1)".
+   **Next: the Fable code review of the frontend.**
 5. **Open — needs live game to verify** (backend could not integration-test; Valorant not
    running on this machine): `latam`/`br` → `na` shard mapping; that the *last*
    `competitivetiers` table entry is the current one; and that the presence nested-vs-flat
    dual paths both fire in the wild. See the new "Implementation notes" in `docs/backend-spec.md`.
+   The UI has the same gap: it was verified against fixture data at 1000x700 (fits with no
+   scrolling, no horizontal overflow) and against the real `ValorantNotRunning` snapshot, but
+   a live ten-player lobby — party colours, the fast → enriched hand-off, real skin art — has
+   not been seen yet.
 
 ## Repo layout
 
@@ -66,8 +74,12 @@ Scaffolded with `pnpm create tauri-app` (react-ts template), files at the repo r
 ├── public/                # Static assets served as-is
 ├── src/                   # React + TypeScript frontend
 │   ├── main.tsx           # React entry, imports index.css
-│   ├── App.tsx            # Placeholder page (dark bg, title, empty player-table region)
-│   └── index.css          # Tailwind v4 entry (`@import "tailwindcss";`)
+│   ├── App.tsx            # Shell: useTracker() -> header + the screen for the status
+│   ├── index.css          # Tailwind v4 entry + theme tokens + the waiting-pulse keyframes
+│   ├── ipc/               # types.ts (mirror of the Rust shapes), tracker.ts (2 commands + 1 event)
+│   ├── hooks/useTracker.ts# start -> initial snapshot -> event subscription, newest wins
+│   ├── lib/               # table.ts (columns + team tints), players.ts, format.ts, profile.ts
+│   └── components/        # Header, StatusScreen, PlayerTable, TeamBlock, PlayerRow, cells/
 └── src-tauri/             # Rust / Tauri 2 backend (Riot pipeline implemented)
     ├── Cargo.toml         # + reqwest, tokio, tokio-tungstenite, native-tls, base64, thiserror
     ├── tauri.conf.json    # productName, identifier com.connor.valorant-tracker, 1000x700 window

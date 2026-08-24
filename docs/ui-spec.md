@@ -54,7 +54,51 @@ Tier 1 = core pipeline (backend phase 1, in progress). Tier 2 = needs additional
 
 Tier 2 caveats: per-player history fetches multiply request count (10 players x N matches) — must be throttled/cached to avoid Riot rate limits (vRY hits this too); exact per-field availability to be confirmed against the live API once Valorant is running on this machine.
 
+## Implemented (v1) — 2026-08-24
+
+Built in `src/` against `docs/ipc-contract.md`. Structure: `ipc/` (types + the two commands
+and one event), `hooks/useTracker.ts` (start -> initial snapshot -> event; a snapshot with an
+older `lastUpdated` never overwrites a newer one), `lib/` (`table.ts` = the single column list
+every row and the legend build their grid from, plus the ally/enemy tint tokens; `players.ts`
+= team split, party colours, enrichment check; `format.ts`; `profile.ts` = tracker.gg link +
+clipboard), `components/` (Header, StatusScreen, PlayerTable -> TeamBlock -> PlayerRow ->
+`cells/`).
+
+Decisions taken while building, beyond the baseline above:
+
+- **Skin columns are Ingame-only.** Loadouts do not exist in pregame, so agent select drops
+  both columns instead of showing two dead ones; the name column takes the space.
+- **Default and random skins are shown as the words "Default" / "Random".** valorant-api has
+  no artwork for them — every one answers with the same 14.5 KB "no image" placeholder (a box
+  with an X), at both the skin and the level-1 icon, so there is no image to prefer.
+- **Tooltips are native `title` attributes.** Zero JS, zero dependencies, and it is what
+  "rank names are tooltips only" needs.
+- **"Still loading" is inferred, not flagged.** The IPC contract has no field saying a
+  snapshot is the fast one, and an absent heavy stat is identical to "player has no data", so
+  the UI treats a snapshot where *no* row has any heavy stat as still loading and shows
+  skeletons; after that an absent value renders "N/A". A lobby where nobody has ever played a
+  competitive match would sit on skeletons — accepted, it is not reachable in practice.
+- **Win rate never shows a skeleton** — it ships with the fast snapshot.
+- **Column order** extends the baseline row for the phase-2 columns: agent · name · Vandal ·
+  Phantom · rank+RR · peak · HS% · WR · last-5 pips · ΔRR · level (skins sit between name and
+  rank; level moved to the end).
+- **Level is hidden for incognito players** (the contract says it is withheld; the backend
+  only withholds it for the separate "hide my level" flag, so the UI enforces it).
+- **Colour budget**: coral accent + neutrals, ally blue / enemy red, and desaturated
+  green/red for win-loss signals only (pips and ΔRR). Party dots use their own five-colour
+  palette, distinct from all of the above.
+
+Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted above):
+
+1. No way to tell a fast snapshot from an enriched one — inferred as described.
+2. `accountLevel` for incognito players: the contract says withheld, `assemble.rs` withholds
+   only on `hide_account_level`. UI hides it.
+3. `agentSelectionState` is documented as `"locked" | "selected" | null` but is Riot's raw
+   string; typed as `string` in the UI and compared against those two values.
+
 ## Open items
 
 - User may still provide reference images; revisit style section when they do.
 - Score display in header: later, once backend exposes it.
+- Not yet seen against a live match: party dot colours, the fast -> enriched hand-off, real
+  skin art, and a full ten-row lobby in the real window.

@@ -172,6 +172,12 @@ pub struct TrackerSnapshot {
     pub own_team: Option<String>,
     /// Player rows (empty in menus / not-running).
     pub players: Vec<PlayerRow>,
+    /// Whether the heavy per-player stats are populated. `false` ONLY on the fast phase-1
+    /// snapshot of a match whose stats are still being fetched; `true` on the enriched
+    /// snapshot, on re-entry snapshots of an already-loaded match, and on all non-match
+    /// states (Menus / ValorantNotRunning). Lets the UI key skeletons off this flag instead
+    /// of inferring "still loading" from data absence.
+    pub enriched: bool,
     /// Epoch milliseconds when this snapshot was produced.
     pub last_updated: u64,
     /// Optional human status line (e.g. "Attempting to reconnect...").
@@ -187,6 +193,7 @@ impl TrackerSnapshot {
             mode: None,
             own_team: None,
             players: Vec::new(),
+            enriched: true,
             last_updated: now_millis(),
             message,
         }
