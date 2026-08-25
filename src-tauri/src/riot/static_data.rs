@@ -90,20 +90,19 @@ impl StaticData {
         })
     }
 
-    /// Resolve a CompetitiveTier number to a display rank (name + icon). Tier 0 -> Unranked
-    /// with no icon.
+    /// Resolve a CompetitiveTier number to a display rank (name + icon). Tier 0 goes through
+    /// the same table lookup as every other tier — the competitivetiers table carries a real
+    /// Unranked icon — and falls back to `RankInfo::unranked()` shape (name "Unranked", no
+    /// icon) when the table has no tier-0 entry.
     pub fn rank(&self, tier: u8) -> RankInfo {
-        if tier == 0 {
+        let icon_url = self
+            .tiers
+            .get(&tier)
+            .and_then(|t| t.large_icon.clone().or_else(|| t.small_icon.clone()));
+        if tier == 0 && icon_url.is_none() {
             return RankInfo::unranked();
         }
-        RankInfo {
-            tier,
-            name: tier_name(tier).to_string(),
-            icon_url: self
-                .tiers
-                .get(&tier)
-                .and_then(|t| t.large_icon.clone().or_else(|| t.small_icon.clone())),
-        }
+        RankInfo { tier, name: tier_name(tier).to_string(), icon_url }
     }
 }
 
@@ -426,11 +425,21 @@ mod tests {
     }
 
     #[test]
-    fn tier_zero_is_unranked_without_icon() {
-        let data = StaticData::default();
+    fn tier_zero_uses_the_tables_unranked_icon() {
+        let tiers = json!({ "data": [
+            { "tiers": [ { "tier": 0, "tierName": "UNRANKED", "smallIcon": null,
+                           "largeIcon": "https://x/unranked.png" } ] }
+        ]});
+        let data = build("v".into(), &json!({}), &json!({}), &tiers, &json!({}));
         let r = data.rank(0);
         assert_eq!(r.tier, 0);
         assert_eq!(r.name, "Unranked");
-        assert!(r.icon_url.is_none());
+        assert_eq!(r.icon_url.as_deref(), Some("https://x/unranked.png"));
+    }
+
+    #[test]
+    fn tier_zero_without_a_table_entry_is_unranked_without_icon() {
+        let data = StaticData::default();
+        assert_eq!(data.rank(0), RankInfo::unranked());
     }
 }
