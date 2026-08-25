@@ -415,11 +415,14 @@ could not be verified because Valorant was not running on the build machine (no 
 - **Win rate / match-history**: implemented in phase 2 (see the phase-2 section below). WR
   reuses the phase-1 MMR payload; HS% reuses the competitiveupdates match-id list instead of a
   separate match-history call.
-- **Presence poke classification**: the websocket poke channel carries a `Poke` (`Own` /
-  `Other`) instead of a unit, so pregame reacts to all players' presence events (a teammate
-  locking an agent) while other states only react to our own. §4-A's "ignore other players'
-  presence events" therefore holds everywhere except Pregame. A drained burst collapses to the
-  strongest poke (`Own` wins), and the reconnect re-poll is always an `Own` poke.
+- **Presence poke classification (revised 2026-08-25)**: only our OWN Valorant presence event
+  is forwarded as a `Poke`; §4-A's "ignore other players' presence events" holds in every state,
+  Pregame included. Another player's event cannot be narrowed to our lobby at the websocket (the
+  roster isn't known there), so honouring them meant every online friend's presence driving a
+  pregame rebuild — and, once a poke could also cancel an in-flight request, cutting real work
+  short. The 1 s pregame poll below already detects everything such an event could signal, so it
+  is the sole pregame change detector. A drained burst collapses to one rebuild, and the
+  reconnect re-poll sends the same `Poke`.
 - **Pregame poll tick (2026-08-25)**: presence events alone are not enough during agent select.
   Riot pushes no presence event when a **non-friend** lobby player picks or locks an agent, and
   our own presence doesn't change either — live captures showed 3 rebuilds in the first ~8 s of
@@ -498,9 +501,12 @@ serde camelCase names are in `docs/ipc-contract.md`.
 core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) **plus phase
 2**: 10 competitiveupdates + up to 10×3 = 30 match-details + 1 loadouts = **41 new requests**.
 All routed through the existing 429 retry with a `INTER_REQUEST_DELAY_MS = 120` pause between
-per-player requests. Re-entry for the same match (score changes every round) refetches
-**nothing** — `MatchCache` serves it; returning players skip match-details via
-`RecentStatsCache`. WR adds **0** requests (reuses phase-1 MMR), and so does KD (it reads the
+per-player requests. A match-details payload is downloaded **once per match id**, not once per
+player (`MatchDetailsCache`, session-lived, keeps only the parsed per-player totals), so lobby
+members who played together share the download and a retry pass refetches only the ids that
+failed. Re-entry for the same match (score changes every round) costs **one** GET — the
+coregame players-id call, kept as the change detector; the roster/map/agents come from
+`MatchCache`, and returning players skip match-details via `RecentStatsCache`. WR adds **0** requests (reuses phase-1 MMR), and so does KD (it reads the
 match-details already fetched for HS%).
 
 ### Review-pass fixes (2026-08-24)
@@ -527,7 +533,10 @@ Applied after a Fable review of the first backend cut:
   retry honoring the server's `Retry-After` header (delay-seconds form, capped at 30s) and
   falling back to ~6s. 401/403 responses map to the `BAD_CLAIMS` refresh signal
   (refresh-once-then-fail). The wrapper sleeps inside the build, so the 1s pregame poll
-  cannot stack attempts while rate-limited. (Audit hardening, 2026-08-25.)
+  cannot stack attempts while rate-limited. The backoff is also recorded as one session-wide
+  deadline (`RateLimitGate`, pd + glz together, since Riot limits the client): every later
+  call waits out whatever is still owed, so abandoning a request mid-backoff — which a
+  transition does — cannot resend inside the server's window. (Audit hardening, 2026-08-25.)
 - **404-race timing.** coregame retries once after ~5s, pregame retries immediately (was 2s
   for both), per §10.5.
 - **Malformed presence.** A single un-parseable presence entry in a websocket batch is skipped,

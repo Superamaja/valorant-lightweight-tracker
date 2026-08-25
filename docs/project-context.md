@@ -66,12 +66,17 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    table + "Last match" chip), and the KD column (same 3-match window as HS%, zero extra
    requests, `PlayerRow.kd`). Party grouping diagnosed as working-as-possible pending a
    party-lobby capture — full findings in roadmap.md. All uncommitted as of the session end.
-8. **NEXT SESSION: audit fix batches.** A Codex mega audit (2026-08-25) found 6 high / 8
-   medium / 7 low findings — full work list with file:line refs and agreed triage in
-   `docs/audit-2026-08-25.md`. Order: batch 1 = the six highs + 429 wrapper on glz;
-   batch 2 = request efficiency (per-match payload cache, redundant ingame glz, prompt
-   cancellation); docs corrections inline; release-workflow items wait for release prep.
-   Release is on hold until batch 1 lands. Later features (header score, polish) come after.
+8. ~~**Audit fix batches.**~~ **Done 2026-08-25.** The Codex mega audit's findings (6 high /
+   8 medium / 7 low) were all fixed in three implementation batches + a frontend/config pass,
+   each Codex-reviewed (three review rounds on batch 1 alone). Highlights: lockfile-staleness
+   reconnect, enrichment finality with bounded per-player retries, full 429/auth coverage with
+   Retry-After, malformed-payload rejection with privacy-safe defaults, static-cache
+   validation + cooldown top-up, per-match payload cache (30->3 downloads per overlapping
+   lobby), in-game glz halved, sub-second cancellation, friend-presence pokes eliminated,
+   bounded caches, CSP enabled, image retry. The audit file was deleted after completion;
+   the only deferred items live in roadmap.md (release-workflow validation, CSP smoke test).
+   Two false positives recorded there too (hold-last-match, React 18). Release hold lifted
+   pending the auto-updater (see roadmap "Last").
 9. **Open items for later sessions** (user finishes the roadmap there):
    - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
      browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.

@@ -47,15 +47,18 @@ sequential fetching, so the backend does not make the UI wait for them):
 1. **Fast snapshot** — as soon as names + MMR are in: `status`, `map`, `mode`, `ownTeam`,
    and per row the `name`, `agent`, `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
    `peakRankAct`, `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
-   no extra request). The heavier fields are **not yet populated**: `rrChange` is `null`,
-   `recentResults` is `[]`, `headshotPercent` and `kd` are `null`, and `vandalSkin` /
-   `phantomSkin` are `null`.
+   no extra request). The heavier fields are **cached-if-available, skeleton otherwise**: a row
+   the backend already holds stats for (a same-match rebuild, a Pregame→Ingame upgrade, a
+   resumed or retried enrichment) carries them straight away, every other row has `rrChange`
+   `null`, `recentResults` `[]`, `headshotPercent` and `kd` `null`, and `vandalSkin` /
+   `phantomSkin` `null`. Values that are present are real — never partial or provisional.
 2. **Enriched snapshot** — a moment later, the same rows with `rrChange`, `recentResults`,
    `headshotPercent`, `kd`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
 
 The UI **must render the fast snapshot immediately** and let those fields fill in on the
 enriched event. **Key loading skeletons on the snapshot's `enriched` flag: `enriched === false`
-is the fast phase-1 snapshot (show skeletons for the heavy fields); `enriched === true` means
+is the fast phase-1 snapshot (show skeletons for heavy fields that are still empty — rows the
+backend already had stats for arrive filled in); `enriched === true` means
 the heavy fields are final.** This supersedes the previous inference of "still loading" from
 data absence (treating a snapshot where no row had any heavy stat as the fast one) — that
 heuristic is no longer needed and must not be used. Once `enriched === true`, a `null`/empty
@@ -107,8 +110,9 @@ interface TrackerSnapshot {
   ownTeam: string | null;       // local player's team id ("Red"|"Blue"); null outside a match
   players: PlayerRow[];         // [] in Menus / ValorantNotRunning
   enriched: boolean;            // false ONLY on the fast phase-1 snapshot (heavy stats still
-                                // loading); true on the enriched snapshot, on re-entry to an
-                                // already-loaded match, and on all non-match states
+                                // loading — present per row only where already cached); true on
+                                // the enriched snapshot, on re-entry to an already-loaded match,
+                                // and on all non-match states
   lastUpdated: number;          // epoch milliseconds this snapshot was produced
   message: string | null;       // optional status line, e.g. "Waiting for Valorant..."
 }
