@@ -10,6 +10,9 @@ Later work, in rough order. Items move out of here and into project-context.md w
 
 ## Done
 
+- **Pregame poll for live agent picks** — ✅ built + verified live (2026-08-25). Event-driven rebuilds missed picks because Riot pushes no presence events for non-friends; a 1s poll tick (Pregame only, deduped publishes, cached path: 1 local + 2 glz GETs) fixes it. User confirmed picks stream in live in a real agent select.
+- **Hold last match table** — verified live 2026-08-25: table + "Last match" chip held after a real match (dev-mode restarts still clear it; release builds only lose it on app close).
+
 - **KD column** — ✅ built + Codex-reviewed clean (2026-08-25). Ratio over the same 3-match window as HS%, from match-details payloads already fetched (zero extra requests). `PlayerRow.kd`, 2 dp, deaths 0 -> kills, null = no data; column after HS%. Verified live in a real match.
 - **Table spacing rebalance** — ✅ (2026-08-25, after live-screenshot feedback). Slack spreads via fr shares (Player 3fr, others 1fr); skin art capped at 88px (`SKIN_ART_WIDTH`) with the phantom track widened to 108px so phantom art -> rank icon gets ~20px at 1000px (was 10px); name-cell copy button is an absolute opaque chip (fixed premature self-name truncation + a Codex overlay finding). Ingame row minimum 946px; Pregame 722px, unaffected. The next fixed-width column has ~50px of headroom at 1000px.
 - **Hold last match table** — ✅ built + reviewed (2026-08-24/25). Menus after a match keeps the last table with a muted "Last match" header chip; ValorantNotRunning/error unchanged. Frontend-only (App.tsx ref-in-effect + Header chip), one-commit revert.
