@@ -78,7 +78,41 @@ fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSn
     }
     snap.last_updated = crate::riot::types::now_millis();
     state.store(snap.clone());
+    #[cfg(debug_assertions)]
+    debug_capture::write(&snap);
     emitter.emit(&snap);
+}
+
+/// Dev-only snapshot capture. Compiled out of release builds entirely, and inert unless
+/// `VLT_DEBUG_CAPTURE` names a directory — see `docs/testing.md`.
+#[cfg(debug_assertions)]
+mod debug_capture {
+    use super::TrackerSnapshot;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Emission counter, so captured files sort in the order they were published.
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Write `snapshot` as pretty JSON to `$VLT_DEBUG_CAPTURE/snapshot-{n:04}-{status}.json`.
+    /// Best-effort: every failure (unset var, unwritable dir, serialization) is ignored so
+    /// capture can never affect the running app.
+    pub fn write(snapshot: &TrackerSnapshot) {
+        let Some(dir) = std::env::var_os("VLT_DEBUG_CAPTURE") else {
+            return;
+        };
+        if dir.is_empty() {
+            return;
+        }
+        let dir = std::path::PathBuf::from(dir);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("snapshot-{:04}-{:?}.json", n, snapshot.status));
+        if let Ok(json) = serde_json::to_string_pretty(snapshot) {
+            let _ = std::fs::write(path, json);
+        }
+    }
 }
 
 /// Shared build context threaded through the build path so each phase can publish directly

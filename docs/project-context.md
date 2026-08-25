@@ -118,6 +118,8 @@ Frontend styling uses Tailwind CSS v4 via the Vite plugin (`@tailwindcss/vite`) 
 - `pnpm tauri build` — produce a release build + installer.
 - `pnpm build` — frontend-only typecheck (`tsc`) + Vite production build (output in `dist/`).
 - `cd src-tauri && cargo check` — typecheck the Rust side.
+- Working on the UI without a live match, or capturing real snapshots to replay: see
+  `docs/testing.md` (dev-only, absent from release builds).
 
 Note: `cargo`/`rustc` are not on PATH by default in this environment; prepend the rustup
 cargo bin dir first (PowerShell: `$env:Path = "$env:USERPROFILE\scoop\apps\rustup\current\.cargo\bin;$env:Path"`).

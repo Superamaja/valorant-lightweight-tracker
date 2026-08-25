@@ -23,6 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
+# Debug/testing mode (see docs/testing.md) — sample snapshot + captured snapshots
+/public/debug-snapshot.json
+/debug/
+/src-tauri/debug/
+
 # Rust / Tauri build output (also covered by src-tauri/.gitignore)
 src-tauri/target
 src-tauri/gen/schemas
