@@ -57,16 +57,18 @@ export function HeadshotCell({ percent, loading }: { percent: number | null; loa
 }
 
 export function KdCell({ kd, loading }: { kd: number | null; loading: boolean }) {
+  // == also catches undefined from a pre-`kd` debug snapshot; a strict check would throw
+  // on toFixed and blank the whole app.
   return (
     <Stat
-      missing={kd === null}
+      missing={kd == null}
       loading={loading}
       className="tabular-nums text-neutral-300"
       title={
-        kd === null ? "No recent competitive matches" : `Kills/deaths over the ${HS_SCOPE}`
+        kd == null ? "No recent competitive matches" : `Kills/deaths over the ${HS_SCOPE}`
       }
     >
-      {kd === null ? null : kd.toFixed(2)}
+      {kd == null ? null : kd.toFixed(2)}
     </Stat>
   );
 }
