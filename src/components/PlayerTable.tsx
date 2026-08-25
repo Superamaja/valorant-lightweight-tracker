@@ -10,7 +10,11 @@ function Legend({ layout }: { layout: TableLayout }) {
       className={`${ROW_GRID} border-l-transparent pb-1 text-[9px] font-medium tracking-[0.14em] text-neutral-600 uppercase`}
     >
       {visibleColumns(layout.withSkins).map((column) => (
-        <span key={column.key} className={column.left ? "" : "text-center"}>
+        <span
+          key={column.key}
+          title={column.hint}
+          className={column.left ? "" : "text-center"}
+        >
           {column.label}
         </span>
       ))}
@@ -32,7 +36,7 @@ export function PlayerTable({ snapshot }: { snapshot: TrackerSnapshot }) {
   };
 
   return (
-    <div className="min-w-fit px-4 pt-2 pb-6">
+    <div className="min-w-fit px-4 pt-2 pb-3">
       <Legend layout={layout} />
       <TeamBlock
         side="ally"

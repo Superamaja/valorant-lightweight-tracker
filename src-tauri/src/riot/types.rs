@@ -125,6 +125,9 @@ pub struct PlayerRow {
     pub leaderboard_rank: i32,
     /// Peak rank across all recorded seasons.
     pub peak_rank: RankInfo,
+    /// Short label for the act the peak rank was achieved in ("E6: A3", "V26: A1"), or null
+    /// when no season could be attributed to the peak.
+    pub peak_rank_act: Option<String>,
     /// Account level, or null when hidden from this viewer.
     pub account_level: Option<u32>,
     /// Party grouping id (only set when the player is in a party of >1).

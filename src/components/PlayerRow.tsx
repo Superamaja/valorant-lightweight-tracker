@@ -5,13 +5,7 @@ import { AgentCell } from "./cells/AgentCell";
 import { NameCell } from "./cells/NameCell";
 import { PeakCell, RankCell } from "./cells/RankCell";
 import { SkinCell } from "./cells/SkinCell";
-import {
-  HeadshotCell,
-  LevelCell,
-  ResultPips,
-  RrChangeCell,
-  WinRateCell,
-} from "./cells/StatCells";
+import { HeadshotCell, ResultPips, RrChangeCell, WinRateCell } from "./cells/StatCells";
 
 /** Same colour for everyone in a party. Solo players keep the column empty. */
 function PartyDot({ mark }: { mark: PartyMark | undefined }) {
@@ -40,12 +34,16 @@ export function PlayerRow({
   return (
     <div
       style={{ gridTemplateColumns: layout.template }}
-      className={`group h-11 rounded-r-md bg-linear-to-r to-transparent transition-colors ${ROW_GRID} ${tint.row} ${
+      className={`group h-12 rounded-r-md bg-linear-to-r to-transparent transition-colors ${ROW_GRID} ${tint.row} ${
         player.isSelf ? "bg-white/[0.04] ring-1 ring-white/10 ring-inset" : ""
       }`}
     >
       <PartyDot mark={player.partyId ? layout.parties.get(player.partyId) : undefined} />
-      <AgentCell agent={player.agent} selectionState={player.agentSelectionState} />
+      <AgentCell
+        agent={player.agent}
+        selectionState={player.agentSelectionState}
+        level={player.accountLevel}
+      />
       <NameCell player={player} />
       {layout.withSkins && (
         <SkinCell skin={player.vandalSkin} weapon="Vandal" loading={layout.loading} />
@@ -58,12 +56,11 @@ export function PlayerRow({
         rr={player.rr}
         leaderboardRank={player.leaderboardRank}
       />
-      <PeakCell rank={player.peakRank} />
+      <PeakCell rank={player.peakRank} act={player.peakRankAct} />
       <HeadshotCell percent={player.headshotPercent} loading={layout.loading} />
       <WinRateCell winRate={player.winRate} />
       <ResultPips results={player.recentResults} loading={layout.loading} />
       <RrChangeCell change={player.rrChange} loading={layout.loading} />
-      <LevelCell level={player.accountLevel} incognito={player.incognito} />
     </div>
   );
 }

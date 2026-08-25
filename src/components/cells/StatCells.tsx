@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { MatchResult, WinRate } from "../../ipc/types";
 import { signed } from "../../lib/format";
+import { HS_SCOPE } from "../../lib/table";
 import { Skeleton } from "../primitives";
 
 /**
@@ -47,7 +48,7 @@ export function HeadshotCell({ percent, loading }: { percent: number | null; loa
       title={
         percent === null
           ? "No recent competitive matches"
-          : "Headshot % across recent competitive matches"
+          : `Headshot % over the ${HS_SCOPE}`
       }
     >
       {percent}%
@@ -88,27 +89,6 @@ export function RrChangeCell({ change, loading }: { change: number | null; loadi
       title={change === null ? "No recent competitive match" : "RR from their last competitive match"}
     >
       {change === null ? null : signed(change)}
-    </Stat>
-  );
-}
-
-/** Level withholding is entirely the backend's: null for hidden/incognito rows, never for self. */
-export function LevelCell({ level, incognito }: { level: number | null; incognito: boolean }) {
-  const shown = level;
-  return (
-    <Stat
-      missing={shown === null}
-      loading={false}
-      className="tabular-nums text-neutral-400"
-      title={
-        shown === null
-          ? incognito
-            ? "Streamer mode — level hidden"
-            : "This player hides their account level"
-          : "Account level"
-      }
-    >
-      {shown}
     </Stat>
   );
 }

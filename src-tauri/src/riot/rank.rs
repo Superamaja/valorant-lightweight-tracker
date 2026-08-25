@@ -116,11 +116,28 @@ pub fn compute_win_rate(
 /// Peak rank across every recorded season. Starts from `current_tier` and scans each
 /// season's `WinsByTier` for the highest tier with > 0 wins, applying the +3 shift for
 /// pre-Ascendant seasons so old Immortal/Radiant wins don't collide with Ascendant.
-pub fn compute_peak(mmr: &MmrResponse, current_tier: u8) -> PeakRank {
+///
+/// Seasons are scanned in content-service (chronological) order so a tie on the peak tier
+/// attributes deterministically to the earliest season, matching vRY's first-wins walk over
+/// Riot's insertion-ordered payload. Ids missing from `seasons` sort last, by id.
+pub fn compute_peak(
+    mmr: &MmrResponse,
+    current_tier: u8,
+    seasons: &[crate::riot::content::Season],
+) -> PeakRank {
     let mut max_tier = current_tier;
     let mut max_season: Option<String> = None;
 
-    for (season_id, info) in &mmr.queue_skills.competitive.seasonal {
+    let position = |id: &str| {
+        seasons
+            .iter()
+            .position(|s| s.id.eq_ignore_ascii_case(id))
+            .unwrap_or(usize::MAX)
+    };
+    let mut entries: Vec<_> = mmr.queue_skills.competitive.seasonal.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| position(a).cmp(&position(b)).then_with(|| a.cmp(b)));
+
+    for (season_id, info) in entries {
         let Some(wins) = &info.wins_by_tier else { continue };
         let pre_ascendant = BEFORE_ASCENDANT_SEASONS.contains(&season_id.as_str());
         for (tier_key, win_count) in wins {
@@ -240,7 +257,7 @@ mod tests {
     fn peak_takes_highest_wins_tier() {
         // current Diamond(18); a season with Immortal-1 (24) wins -> peak 24.
         let mmr = mmr_with("modern-season", 18, 20, 0, json!({ "24": 3, "20": 10 }));
-        let peak = compute_peak(&mmr, 18);
+        let peak = compute_peak(&mmr, 18, &[]);
         assert_eq!(peak.tier, 24);
         assert_eq!(peak.season_id.as_deref(), Some("modern-season"));
     }
@@ -248,7 +265,7 @@ mod tests {
     #[test]
     fn peak_ignores_zero_win_tiers() {
         let mmr = mmr_with("modern-season", 18, 20, 0, json!({ "27": 0, "22": 5 }));
-        let peak = compute_peak(&mmr, 18);
+        let peak = compute_peak(&mmr, 18, &[]);
         assert_eq!(peak.tier, 22);
     }
 
@@ -257,21 +274,47 @@ mod tests {
         // Pre-Ascendant season: Immortal was tier 21 back then; +3 -> 24 (modern Immortal 1).
         let old_season = BEFORE_ASCENDANT_SEASONS[0];
         let mmr = mmr_with(old_season, 15, 0, 0, json!({ "21": 4 }));
-        let peak = compute_peak(&mmr, 15);
+        let peak = compute_peak(&mmr, 15, &[]);
         assert_eq!(peak.tier, 24, "old tier 21 (Immortal) must shift to 24");
     }
 
     #[test]
     fn peak_no_shift_for_modern_season() {
         let mmr = mmr_with("modern-season", 15, 0, 0, json!({ "21": 4 }));
-        let peak = compute_peak(&mmr, 15);
+        let peak = compute_peak(&mmr, 15, &[]);
         assert_eq!(peak.tier, 21, "modern tier 21 (Ascendant 1) unchanged");
+    }
+
+    #[test]
+    fn peak_tie_attributes_to_earliest_content_season() {
+        // Same peak tier (22) reached in two acts: the tie must go to whichever season
+        // comes first in the content-service list, regardless of HashMap iteration order.
+        let mmr = parse_mmr(json!({
+            "QueueSkills": { "competitive": { "SeasonalInfoBySeasonID": {
+                "act-late":  { "CompetitiveTier": 20, "WinsByTier": { "22": 2 } },
+                "act-early": { "CompetitiveTier": 20, "WinsByTier": { "22": 5 } }
+            }}}
+        }));
+        let season = |id: &str| crate::riot::content::Season {
+            id: id.into(),
+            name: String::new(),
+            season_type: "act".into(),
+            start_time: String::new(),
+            end_time: String::new(),
+            is_active: false,
+        };
+        let seasons = [season("act-early"), season("act-late")];
+        for _ in 0..16 {
+            let peak = compute_peak(&mmr, 18, &seasons);
+            assert_eq!(peak.tier, 22);
+            assert_eq!(peak.season_id.as_deref(), Some("act-early"));
+        }
     }
 
     #[test]
     fn peak_defaults_to_current_when_no_wins() {
         let mmr = mmr_with("s1", 19, 30, 0, json!(null));
-        let peak = compute_peak(&mmr, 19);
+        let peak = compute_peak(&mmr, 19, &[]);
         assert_eq!(peak.tier, 19);
         assert!(peak.season_id.is_none());
     }

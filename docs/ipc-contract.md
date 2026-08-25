@@ -46,7 +46,7 @@ sequential fetching, so the backend does not make the UI wait for them):
 
 1. **Fast snapshot** — as soon as names + MMR are in: `status`, `map`, `mode`, `ownTeam`,
    and per row the `name`, `agent`, `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
-   `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
+   `peakRankAct`, `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
    no extra request). The heavier fields are **not yet populated**: `rrChange` is `null`,
    `recentResults` is `[]`, `headshotPercent` is `null`, and `vandalSkin` / `phantomSkin`
    are `null`.
@@ -131,6 +131,8 @@ interface PlayerRow {
   rr: number;                   // ranked rating 0–100 (0 when unranked)
   leaderboardRank: number;      // leaderboard position; nonzero only for Ascendant+ top players
   peakRank: RankInfo;           // highest rank across all recorded seasons
+  peakRankAct: string | null;   // act the peak was set in: "E6: A3", "V26: A1"; null when no
+                                // season could be attributed to the peak
   accountLevel: number | null;  // null when hidden from this viewer (see rules below)
   partyId: string | null;       // grouping id; set only when the player is in a party of >1
 
@@ -195,9 +197,9 @@ interface RankInfo {
   always see the real level (the backend never nulls the self row). **Wire caveat:** Riot
   itself zeroes `AccountLevel` in the coregame `PlayerIdentity` when the hide-level flag is set,
   even for your own row, so an in-match self level may read `0` off the wire; your MENUS
-  presence carries the real level. The backend passes the self level straight through — it does
-  not backfill from presence — so treat a self `accountLevel` of `0` in-match as "hidden by
-  Riot", not a real level-0 account.
+  presence carries the real level. The backend does not backfill from presence — it treats a
+  wire `0` as "hidden by Riot" and emits `null`, self row included. **`accountLevel` is
+  therefore never `0`:** the only values are a real level or `null`.
 - **`agent` = null / `agentSelectionState`** — `agentSelectionState` is Riot's raw
   `CharacterSelectionState` string passed straight through (**not** a closed enum): type it as
   `string | null`. `"locked"` and `"selected"` are the known values, but treat any other string
@@ -208,6 +210,13 @@ interface RankInfo {
   `tier: 0, name: "Unranked", iconUrl: null` and `rr: 0` for that player only.
 - **`peakRank`** already accounts for the pre-Ascendant tier renumbering — treat `tier` as a
   modern tier number and map it with the same icons as `currentRank`.
+- **`peakRankAct`** is a display-ready short label for the act that peak was set in:
+  `"E{episode}: A{act}"` (`"E6: A3"`), or `"{episode}: A{act}"` when the episode identifier
+  already carries a letter — the V-era naming (`"V26: A1"`). Which episode/act an id maps to
+  is derived exactly as vRY does; only the formatting differs (vRY prints `(e6a3)`). It is
+  `null` when the peak is the player's current tier with no better season on record (nothing
+  to attribute it to) or the season id is missing from the content service. Render it
+  verbatim next to the peak icon.
 - **Party grouping** — players sharing a `partyId` are in the same party. `null` means solo
   (or a party of one). Use it to draw the matching-dot / bracket accent from the UI spec.
 - **`iconUrl` / `splashUrl` etc.** are direct valorant-api.com PNG URLs. They are stable per

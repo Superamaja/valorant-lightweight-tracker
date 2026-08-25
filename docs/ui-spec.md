@@ -96,6 +96,14 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
 3. `agentSelectionState` is documented as `"locked" | "selected" | null` but is Riot's raw
    string; typed as `string` in the UI and compared against those two values.
 
+## Revision 2 (agreed 2026-08-24, user feedback after first live run)
+
+- **Level column removed.** Level renders as a small badge on the agent portrait (corner) instead. Level `null` OR `0` = hidden: show nothing (0 is Riot's "hidden" wire value; backend nulls it).
+- **Peak rank cell un-dimmed**: same icon size and full color as the current-rank icon, plus the peak's episode/act short label next to it, formatted capitalized with colon+space: `E6: A3` / `V26: A1`. Backend exposes the label pre-formatted (new contract field).
+- **HS% scope labeled**: header/tooltip says it covers the last 3 competitive matches (backend constant; changeable).
+- **Rows slightly thicker** so the agent portrait can be larger and carry the level badge.
+- Sizing must be verified against an emulated 10-player lobby at 1000x700 (no horizontal overflow, no scrolling), fixture removed after.
+
 ## Open items
 
 - User may still provide reference images; revisit style section when they do.

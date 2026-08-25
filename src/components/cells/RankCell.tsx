@@ -48,12 +48,13 @@ export function RankCell({
   );
 }
 
-/** Peak rank: smaller and muted, it should never compete with the current rank. */
-export function PeakCell({ rank }: { rank: RankInfo }) {
-  const title = `Peak: ${rank.name}`;
+/** Peak rank: same icon size and weight as the current rank, with the act it was set in. */
+export function PeakCell({ rank, act }: { rank: RankInfo; act: string | null }) {
+  const title = `Peak: ${rank.name}${act ? ` · ${act}` : ""}`;
   return (
-    <div className="flex justify-center opacity-55" title={title}>
-      <RankIcon rank={rank} size="h-5 w-5" title={title} />
+    <div className="flex items-center gap-1.5" title={title}>
+      <RankIcon rank={rank} size="h-7 w-7" title={title} />
+      {act && <span className="text-[9px] tracking-wide text-neutral-500">{act}</span>}
     </div>
   );
 }

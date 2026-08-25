@@ -410,9 +410,8 @@ could not be verified because Valorant was not running on the build machine (no 
   data layer. vRY's raw behaviour still returns the name from name-service; we withhold it in
   the emitted snapshot so a hidden name can never reach the UI. Adjust if the UI would rather
   receive the name plus a flag and decide for itself.
-- **Season label parsing** (`content.get_act_episode_from_act_id`, the "peak: Immortal 2 (E5A3)"
-  text): **not implemented** — the UI spec only needs the peak *icon*. `content::previous_season_id`
-  exists (behind `#[allow(dead_code)]`) as a hook if the act-label feature is added later.
+- **Season label parsing** (`content.get_act_episode_from_act_id`): implemented in
+  `content::act_label` for UI revision 2 — see the revision-2 note at the end of this section.
 - **Win rate / match-history**: implemented in phase 2 (see the phase-2 section below). WR
   reuses the phase-1 MMR payload; HS% reuses the competitiveupdates match-id list instead of a
   separate match-history call.
@@ -622,6 +621,28 @@ backend side (`ipc-contract.md` updated to match):
    `core-game/v1/players/{puuid}.MatchID`. If they ever differ, the pregame→ingame data reuse
    still works by match-id fallback but the freshness guard becomes a no-op (harmless — the
    ingame build just refetches everything).
+
+### UI revision 2 — contract additions (2026-08-24)
+
+Two backend changes requested by `ui-spec.md` "Revision 2":
+
+- **`accountLevel` 0 means hidden.** `assemble.rs` now emits `null` for a wire `AccountLevel`
+  of 0 (Riot zeroes it when the hide-level flag is set — even on your own row, confirmed in
+  live verification round 2) instead of passing the 0 through. `accountLevel` is therefore
+  never 0 on the wire to the UI: a real level or `null`.
+- **`peakRankAct`** (`PlayerRow.peak_rank_act`): short label for the act the peak rank was set
+  in, e.g. `"E6: A3"` / `"V26: A1"`. `content::act_label` ports vRY's
+  `Content.get_act_episode_from_act_id` — walk the content-service season list, read the
+  matching act's trailing name token (Roman or Arabic), and pair it with the last `episode`
+  entry seen before the act's own episode; the episode keeps its identifier verbatim when it
+  already mixes letters and digits (the V-era `V26` naming), otherwise it gets an `E` prefix.
+  One deliberate improvement over vRY: the newest act has no episode entry after it, where vRY
+  leaves the episode unset and prints a literal `None`; we fall back to the last episode seen.
+  The label is `null` when `rank::compute_peak` attributes no season to the peak (peak == the
+  player's current tier). vRY instead falls back to the *current* act there — worth revisiting
+  if the blank cell reads wrong in a live lobby. The season list is now kept on `Session`
+  (`seasons`) and passed through `AssembleInput::seasons`; the season id is derived from it
+  rather than from a second parse.
 
 ## Live verification (2026-08-24, NA account, in-menus)
 

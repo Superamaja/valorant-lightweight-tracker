@@ -58,6 +58,8 @@ export interface PlayerRow {
   /** Nonzero only for Ascendant+ leaderboard players. */
   leaderboardRank: number;
   peakRank: RankInfo;
+  /** Act the peak was reached in, e.g. "E6: A3" / "V26: A1". Null when unattributed. */
+  peakRankAct: string | null;
   accountLevel: number | null;
   partyId: string | null;
 

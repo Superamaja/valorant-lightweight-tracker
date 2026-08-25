@@ -12,21 +12,29 @@ export interface Column {
   width: string;
   /** Cell content starts at the left edge, so the legend must too. */
   left?: boolean;
+  /** Legend tooltip, for a label too short to carry its own scope. */
+  hint?: string;
 }
+
+/**
+ * How many recent competitive matches HS% is computed over. Mirrors the backend's
+ * `RECENT_MATCHES_FOR_HS` (`src-tauri/src/riot/constants.rs`) — keep the two in step.
+ */
+export const HS_MATCH_WINDOW = 3;
+export const HS_SCOPE = `last ${HS_MATCH_WINDOW} competitive matches`;
 
 const COLUMNS: Column[] = [
   { key: "party", label: "", width: "8px" },
-  { key: "agent", label: "", width: "40px" },
+  { key: "agent", label: "", width: "44px" },
   { key: "name", label: "Player", width: "minmax(120px,1fr)", left: true },
   { key: "vandal", label: "Vandal", width: "104px" },
   { key: "phantom", label: "Phantom", width: "104px" },
   { key: "rank", label: "Rank", width: "92px", left: true },
-  { key: "peak", label: "Peak", width: "34px" },
-  { key: "hs", label: "HS%", width: "46px" },
+  { key: "peak", label: "Peak", width: "78px", left: true },
+  { key: "hs", label: "HS%", width: "46px", hint: `Headshot % over the ${HS_SCOPE}` },
   { key: "wr", label: "WR", width: "62px" },
   { key: "recent", label: "Last 5", width: "68px" },
   { key: "delta", label: "ΔRR", width: "46px" },
-  { key: "level", label: "Lvl", width: "40px" },
 ];
 
 /** Loadouts only exist once a match starts, so the skin columns are Ingame-only. */

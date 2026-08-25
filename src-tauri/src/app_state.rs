@@ -109,6 +109,8 @@ struct Session {
     own_puuid: String,
     static_data: StaticData,
     season_id: String,
+    /// Content-service season list, kept for the peak-rank act label.
+    seasons: Vec<content::Season>,
     /// Names/MMR/stats cached per match id (+ state) so an in-match presence update (score
     /// changes every round) does not refetch them (L1).
     cache: MatchCache,
@@ -260,14 +262,13 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
     };
     let remote = RemoteClient::new(hosts, auth)?;
 
-    // Season id from content service.
-    let season_id = match remote.content().await {
-        Ok(content_json) => {
-            let seasons = content::parse_seasons(&content_json);
-            content::current_season_id(&seasons).unwrap_or_default()
-        }
-        Err(_) => String::new(),
+    // Seasons from the content service: the current season id, plus the list itself for the
+    // peak-rank act label.
+    let seasons = match remote.content().await {
+        Ok(content_json) => content::parse_seasons(&content_json),
+        Err(_) => Vec::new(),
     };
+    let season_id = content::current_season_id(&seasons).unwrap_or_default();
 
     Ok(Session {
         lockfile,
@@ -276,6 +277,7 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
         own_puuid: entitlements.subject,
         static_data,
         season_id,
+        seasons,
         cache: MatchCache::default(),
         hs_cache: HsCache::default(),
     })
@@ -560,6 +562,7 @@ fn assemble_snapshot(
         own_puuid: &session.own_puuid,
         own_team: own_team.as_deref(),
         current_season_id: &session.season_id,
+        seasons: &session.seasons,
     });
     TrackerSnapshot {
         status,

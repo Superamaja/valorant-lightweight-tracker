@@ -2,6 +2,7 @@
 //! Pure and fixture-testable — this is where privacy rules (incognito, HideAccountLevel)
 //! and rank resolution are applied. See spec §5, §7, §8.
 
+use crate::riot::content::{self, Season};
 use crate::riot::loadout::PlayerSkinIds;
 use crate::riot::match_state::MatchPlayer;
 use crate::riot::rank::{self, MmrResponse};
@@ -29,6 +30,8 @@ pub struct AssembleInput<'a> {
     pub own_puuid: &'a str,
     pub own_team: Option<&'a str>,
     pub current_season_id: &'a str,
+    /// Content-service season list, used to label the act a peak rank was achieved in.
+    pub seasons: &'a [Season],
 }
 
 /// Build the player rows. Applies incognito/level privacy rules, rank + phase-2 stat
@@ -56,15 +59,20 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
 
             // Account level: shown to self + own party regardless; otherwise withheld when
             // the player is incognito OR set "hide my level" (contract: level is withheld for
-            // incognito players too, not just the hide-level flag).
+            // incognito players too, not just the hide-level flag). A wire value of 0 is
+            // Riot's own zeroing of a hidden level (it does this even on your own row), never
+            // a real level, so it is withheld too.
             let level_visible =
                 (!p.incognito && !p.hide_account_level) || is_self || is_party_of_self;
-            let account_level = if level_visible { Some(p.account_level) } else { None };
+            let account_level =
+                (level_visible && p.account_level > 0).then_some(p.account_level);
 
             // Ranks + WR (all from the same MMR payload — no extra request for WR).
             let mmr = input.mmr.get(&p.puuid).unwrap_or(&default_mmr);
             let current = rank::compute_current(mmr, input.current_season_id);
-            let peak = rank::compute_peak(mmr, current.tier);
+            let peak = rank::compute_peak(mmr, current.tier, input.seasons);
+            let peak_rank_act =
+                peak.season_id.as_deref().and_then(|id| content::act_label(input.seasons, id));
             let win_rate = rank::compute_win_rate(mmr, input.current_season_id);
 
             // ΔRR + last-5 pips.
@@ -95,6 +103,7 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 rr: current.rr,
                 leaderboard_rank: current.leaderboard_rank,
                 peak_rank: input.static_data.rank(peak.tier),
+                peak_rank_act,
                 account_level,
                 party_id: player_party,
                 win_rate,
@@ -173,6 +182,7 @@ mod tests {
         skins: HashMap<String, PlayerSkinIds>,
         static_data: StaticData,
         own_team: Option<String>,
+        seasons: Vec<Season>,
     }
 
     impl Case {
@@ -189,6 +199,7 @@ mod tests {
                 own_puuid,
                 own_team: self.own_team.as_deref(),
                 current_season_id: "s1",
+                seasons: &self.seasons,
             })
         }
     }
@@ -277,6 +288,49 @@ mod tests {
         let wr = me.win_rate.unwrap();
         assert_eq!(wr.percent, 57);
         assert_eq!(wr.games, 14);
+    }
+
+    #[test]
+    fn labels_the_act_the_peak_was_achieved_in() {
+        let players = vec![base_player("me", "Blue")];
+        let mmr = mmr_map(&[(
+            "me",
+            json!({ "QueueSkills": { "competitive": { "SeasonalInfoBySeasonID": {
+                "e6a3": { "CompetitiveTier": 0, "WinsByTier": { "24": 2 } },
+                "s1": { "CompetitiveTier": 13, "RankedRating": 40 }
+            }}}}),
+        )]);
+        let seasons = crate::riot::content::parse_seasons(&json!({ "Seasons": [
+            { "ID": "e6", "Name": "EPISODE 6", "Type": "episode" },
+            { "ID": "e6a3", "Name": "ACT III", "Type": "act" },
+            { "ID": "e7", "Name": "EPISODE 7", "Type": "episode" },
+            { "ID": "s1", "Name": "ACT I", "Type": "act", "IsActive": true }
+        ]}));
+        let case = Case { mmr, seasons, own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        let me = row(&rows, "me");
+        assert_eq!(me.peak_rank.tier, 24);
+        assert_eq!(me.peak_rank_act.as_deref(), Some("E6: A3"));
+    }
+
+    #[test]
+    fn peak_act_is_null_without_a_peak_season() {
+        // Peak == current tier, so no season is attributed to it.
+        let players = vec![base_player("me", "Blue")];
+        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        assert_eq!(row(&rows, "me").peak_rank_act, None);
+    }
+
+    #[test]
+    fn zero_wire_level_is_hidden_not_a_real_level() {
+        // Riot zeroes AccountLevel when the level is hidden — even on your own row.
+        let mut me = base_player("me", "Blue");
+        me.account_level = 0;
+        let players = vec![me];
+        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        assert_eq!(row(&rows, "me").account_level, None);
     }
 
     #[test]
