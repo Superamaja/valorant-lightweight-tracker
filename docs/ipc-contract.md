@@ -132,7 +132,8 @@ interface PlayerRow {
                                        // passed through. Known values "locked" | "selected";
                                        // other strings possible. null outside pregame
   currentRank: RankInfo;        // current competitive rank
-  rr: number;                   // ranked rating 0–100 (0 when unranked)
+  rr: number;                   // ranked rating; 0–100 below Immortal (0 when unranked),
+                                // uncapped for Immortal+ (Riot's RankedRating passthrough)
   leaderboardRank: number;      // leaderboard position; nonzero only for Ascendant+ top players
   peakRank: RankInfo;           // highest rank across all recorded seasons
   peakRankAct: string | null;   // act the peak was set in: "E6: A3", "V26: A1"; null when no
