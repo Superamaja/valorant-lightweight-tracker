@@ -2,7 +2,7 @@
 
 A lightweight Windows desktop app that shows an **in-match player table** for
 your current VALORANT match: everyone's rank, RR, peak rank, level, agent, and
-per-player stats in a clean, image-first GUI instead of a console window.
+per-player stats in a clean GUI.
 
 <!-- App screenshot goes here once ready:
 ![Valorant Lightweight Tracker showing an in-match player table](docs/assets/app-screenshot.png)
