@@ -13,6 +13,9 @@ const CHIP: Record<AppStatus, { label: string; dot: string; pulse: boolean }> = 
 
 const CONNECTING = { label: "Starting", dot: "bg-neutral-600", pulse: true };
 
+/** Shown while a finished match's table is still up: the rows are history, not live. */
+const LAST_MATCH = { label: "Last match", dot: "bg-neutral-600", pulse: false };
+
 function LastUpdated({ at }: { at: number }) {
   const [, tick] = useState(0);
 
@@ -31,10 +34,19 @@ function LastUpdated({ at }: { at: number }) {
   );
 }
 
-/** Map, mode, state chip and freshness. The map splash carries the colour. */
-export function Header({ snapshot }: { snapshot: TrackerSnapshot | null }) {
+/**
+ * Map, mode, state chip and freshness. The map splash carries the colour. With `lastMatch`
+ * the snapshot is a held one from a match that has ended, so the chip must not read as live.
+ */
+export function Header({
+  snapshot,
+  lastMatch = false,
+}: {
+  snapshot: TrackerSnapshot | null;
+  lastMatch?: boolean;
+}) {
   const map = snapshot?.map ?? null;
-  const chip = snapshot ? CHIP[snapshot.status] : CONNECTING;
+  const chip = lastMatch ? LAST_MATCH : snapshot ? CHIP[snapshot.status] : CONNECTING;
   const mode = snapshot?.mode ?? null;
 
   return (
