@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 interface ImgProps {
   src: string | null;
@@ -10,20 +10,48 @@ interface ImgProps {
   fallback?: ReactNode;
 }
 
+/** Delay before each retry of a failed URL; its length is also the retry budget. */
+const RETRY_DELAYS_MS = [500, 2500];
+
+interface Failure {
+  src: string;
+  /** How many loads of `src` have failed so far. */
+  count: number;
+  /** True while the retry delay is running; the fallback stands in meanwhile. */
+  waiting: boolean;
+}
+
 /** An image that degrades quietly: null URLs and 404s fall back instead of showing a break. */
 export function Img({ src, alt, title, className, fallback = null }: ImgProps) {
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  // A changed URL starts over: the old failure no longer describes what is rendered.
+  const current = failure?.src === src ? failure : null;
+  const count = current?.count ?? 0;
+  const waiting = current?.waiting ?? false;
 
-  if (!src || failedSrc === src) return <>{fallback}</>;
+  useEffect(() => {
+    if (!src || !waiting) return;
+    const timer = setTimeout(
+      () => setFailure({ src, count, waiting: false }),
+      RETRY_DELAYS_MS[count - 1],
+    );
+    return () => clearTimeout(timer);
+  }, [src, count, waiting]);
+
+  if (!src || waiting || count > RETRY_DELAYS_MS.length) return <>{fallback}</>;
 
   return (
     <img
+      // Remounting is what makes the browser request the same URL again.
+      key={count}
       src={src}
       alt={alt}
       title={title ?? alt}
       className={className}
       draggable={false}
-      onError={() => setFailedSrc(src)}
+      onError={() =>
+        setFailure({ src, count: count + 1, waiting: count < RETRY_DELAYS_MS.length })
+      }
     />
   );
 }
