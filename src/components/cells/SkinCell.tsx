@@ -1,4 +1,5 @@
 import type { SkinInfo } from "../../ipc/types";
+import { SKIN_ART_WIDTH } from "../../lib/table";
 import { Img, Skeleton } from "../primitives";
 
 const CELL = "flex h-6 items-center justify-center";
@@ -50,7 +51,7 @@ export function SkinCell({
       <Img
         src={skin.iconUrl}
         alt={label}
-        className="max-h-6 w-full object-contain"
+        className={`max-h-6 w-full ${SKIN_ART_WIDTH} object-contain`}
         fallback={
           <span className="w-full truncate text-center text-[10px] text-neutral-500">{label}</span>
         }

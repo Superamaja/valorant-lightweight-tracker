@@ -24,7 +24,7 @@ export function NameCell({ player }: { player: PlayerRow }) {
   };
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="relative flex min-w-0 items-center gap-1.5">
       {riotId ? (
         <button
           type="button"
@@ -53,12 +53,20 @@ export function NameCell({ player }: { player: PlayerRow }) {
         </span>
       )}
 
+      {/*
+        Out of flow on purpose: inline it reserved its width plus a gap even while invisible,
+        which pushed the name into an ellipsis on rows that also carry the YOU badge. Now the
+        name and the badge get the whole cell and only truncate when they genuinely overflow.
+        Because it can land over the tail of a long name, it fades in as its own opaque chip
+        rather than as a bare glyph on top of text — reserving space for it again would bring
+        the truncation back, and padding it in only on hover would make the name jump.
+      */}
       {riotId && (
         <button
           type="button"
           onClick={() => copy(riotId)}
           title="Copy name#tag"
-          className={`shrink-0 cursor-pointer transition-opacity focus-visible:outline-none ${
+          className={`absolute top-1/2 right-0 z-10 -translate-y-1/2 cursor-pointer rounded-sm bg-edge/95 p-0.5 ring-1 ring-white/10 backdrop-blur-[2px] transition-opacity focus-visible:outline-none ${
             copied
               ? "text-win opacity-100"
               : "text-neutral-500 opacity-0 hover:text-neutral-200 group-hover:opacity-100 focus-visible:opacity-100"
