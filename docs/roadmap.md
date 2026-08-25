@@ -30,11 +30,12 @@ Later work, in rough order. Items move out of here and into project-context.md w
 
 ## Later
 
-- **Party grouping — awaiting party-lobby evidence.** Diagnosis so far (2026-08-24/25): vRY has no extra mechanism — same `/chat/v4/presences` intersection we do (its "wait_for_presence" is a no-op bug). Decoded live dumps prove Riot only pushes presence for self + friends: mid-game the roster held 0 of the 9 other match players, and no field enumerates party members' puuids. Our `party_grouping()` returning empty was CORRECT for a solo queue with no friends in the lobby — not a bug. Open question: does Riot push presence for your own party members (likely — would make party dots work for premades + friends, which is plausibly all vRY ever shows)? **Test: queue one game in a party with `VLT_DEBUG_CAPTURE` on**, check the dumps for the partymate + shared partyId; also check the pregame-phase dumps. Then either implement a bounded pregame re-poll (~1-2s up to ~10s) if data appears late, or close the item as working-as-possible. Cheap extra: decoder ignores `isPartyOwner` (party-leader marker, free to add).
 - **Header score display** — live round score is already in the data we fetch: own presence `partyOwnerMatchScoreAllyTeam` / `partyOwnerMatchScoreEnemyTeam`. Nearly free to expose in the snapshot + header.
 - **Discord RPC** — architecture seam exists; not built (user decision).
 - **vRY upstream check** — user-triggered every few weeks; procedure + last-checked hash live in docs/maintenance.md.
 
 ## Rejected
+
+- **Party grouping fix** — dropped by user decision (2026-08-25), no need. Diagnosis (kept for the record): vRY has no extra mechanism — same `/chat/v4/presences` intersection we already do; Riot only pushes presence for self + friends (+ likely own partymates), so arbitrary-player party detection is impossible from this data. Our `party_grouping()` returning empty in a friendless solo queue was correct behavior. The existing party-dot rendering stays as-is: it lights up when the data exists (premades/friends), silently shows nothing otherwise.
 
 - **Overlay mode** — user decision: stays a separate app window, never an overlay. (Injected overlays are Vanguard-risky; a separate window is safe, and we're not doing always-on-top either.)
