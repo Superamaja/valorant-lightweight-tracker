@@ -41,7 +41,9 @@ export function NameCell({ player }: { player: PlayerRow }) {
       ) : (
         <span
           title={player.incognito ? "Streamer mode — name hidden" : "Name unavailable"}
-          className="min-w-0 truncate text-[13px] text-neutral-500 italic"
+          // Italic marks a placeholder ("Hidden player"); once an agent is known the label is
+          // that agent's name — still muted, but no longer a stand-in worth flagging.
+          className={`min-w-0 truncate text-[13px] text-neutral-500 ${player.agent ? "" : "italic"}`}
         >
           {label}
         </span>
