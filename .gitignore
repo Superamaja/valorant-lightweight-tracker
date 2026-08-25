@@ -25,6 +25,7 @@ dist-ssr
 
 # Debug/testing mode (see docs/testing.md) — sample snapshot + captured snapshots
 /public/debug-snapshot.json
+/public/_debug-snapshot.json
 /debug/
 /src-tauri/debug/
 

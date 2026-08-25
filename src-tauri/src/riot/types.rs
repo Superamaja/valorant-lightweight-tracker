@@ -56,7 +56,8 @@ pub struct RankInfo {
     pub tier: u8,
     /// Human name from NUMBER_TO_RANK (e.g. "Immortal 2").
     pub name: String,
-    /// competitivetiers `smallIcon`/`largeIcon` URL, or null (Unranked / unresolved).
+    /// competitivetiers `smallIcon`/`largeIcon` URL (set for Unranked too), or null when
+    /// unresolved.
     pub icon_url: Option<String>,
 }
 
@@ -98,7 +99,9 @@ pub struct SkinInfo {
 }
 
 /// One row in the in-match player table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Not `Eq`: `kd` is a float. Snapshot dedup only ever needs `PartialEq`, and the value is a
+// finite ratio (never NaN), so equality stays well behaved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerRow {
     /// Opaque player id (puuid). Row key only.
@@ -142,6 +145,9 @@ pub struct PlayerRow {
     /// Headshot percentage across the last N recent competitive matches (0-100), or null
     /// when the player has no recent matches (vRY shows "N/a").
     pub headshot_percent: Option<u32>,
+    /// Kills/deaths across the same recent competitive matches HS% is computed from,
+    /// rounded to 2 decimals, or null when those matches carry no stats for the player.
+    pub kd: Option<f64>,
     /// Equipped Vandal skin (INGAME only; null in pregame/menus).
     pub vandal_skin: Option<SkinInfo>,
     /// Equipped Phantom skin (INGAME only; null in pregame/menus).
@@ -163,7 +169,8 @@ pub struct MapInfo {
 }
 
 /// The full snapshot emitted to the frontend on every state change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Not `Eq` — it carries `PlayerRow`s (see the note there); dedup uses `PartialEq` only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackerSnapshot {
     pub status: AppStatus,

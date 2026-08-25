@@ -15,7 +15,7 @@ use crate::riot::presence::{self, PresenceInfo};
 use crate::riot::rank::{parse_mmr, MmrResponse};
 use crate::riot::remote_api::{build_hosts, Auth, RemoteClient};
 use crate::riot::static_data::{self, StaticData};
-use crate::riot::stats::{self, HitCounts, RrHistory};
+use crate::riot::stats::{self, MatchTotals, RecentStats, RrHistory};
 use crate::riot::types::{AppStatus, MapInfo, SessionLoopState, TrackerSnapshot};
 use crate::riot::websocket::Poke;
 use std::collections::HashMap;
@@ -90,33 +90,59 @@ fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSn
     emitter.emit(&snap);
 }
 
-/// Dev-only snapshot capture. Compiled out of release builds entirely, and inert unless
-/// `VLT_DEBUG_CAPTURE` names a directory — see `docs/testing.md`.
+/// Dev-only capture of what the tracker saw. Compiled out of release builds entirely, and
+/// inert unless `VLT_DEBUG_CAPTURE` names a directory — see `docs/testing.md`.
 #[cfg(debug_assertions)]
 mod debug_capture {
     use super::TrackerSnapshot;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// Emission counter, so captured files sort in the order they were published.
+    /// Capture counter, so captured files sort in the order they were written — snapshots
+    /// and presence dumps share it, which is what makes the interleaving readable.
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+    /// Whether capture is on: `VLT_DEBUG_CAPTURE` set to a non-empty directory. Cheap, so
+    /// callers can gate any work that capture would otherwise cost them.
+    pub fn enabled() -> bool {
+        std::env::var_os("VLT_DEBUG_CAPTURE").is_some_and(|dir| !dir.is_empty())
+    }
+
     /// Write `snapshot` as pretty JSON to `$VLT_DEBUG_CAPTURE/snapshot-{n:04}-{status}.json`.
-    /// Best-effort: every failure (unset var, unwritable dir, serialization) is ignored so
-    /// capture can never affect the running app.
     pub fn write(snapshot: &TrackerSnapshot) {
-        let Some(dir) = std::env::var_os("VLT_DEBUG_CAPTURE") else {
+        let Some(dir) = capture_dir() else {
             return;
         };
-        if dir.is_empty() {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        write_json(dir.join(format!("snapshot-{n:04}-{:?}.json", snapshot.status)), snapshot);
+    }
+
+    /// Write the raw `/chat/v4/presences` body of one rebuild as pretty JSON to
+    /// `$VLT_DEBUG_CAPTURE/presences-{n:04}.json`. Undecoded on purpose: the point is to see
+    /// exactly what the local roster held (e.g. whether match players appear in it at all).
+    pub fn write_presences(body: &serde_json::Value) {
+        let Some(dir) = capture_dir() else {
             return;
+        };
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        write_json(dir.join(format!("presences-{n:04}.json")), body);
+    }
+
+    /// The capture directory, created if needed. `None` (so the caller does nothing) when
+    /// capture is off or the directory is unusable.
+    fn capture_dir() -> Option<std::path::PathBuf> {
+        let dir = std::env::var_os("VLT_DEBUG_CAPTURE")?;
+        if dir.is_empty() {
+            return None;
         }
         let dir = std::path::PathBuf::from(dir);
-        if std::fs::create_dir_all(&dir).is_err() {
-            return;
-        }
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = dir.join(format!("snapshot-{:04}-{:?}.json", n, snapshot.status));
-        if let Ok(json) = serde_json::to_string_pretty(snapshot) {
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    }
+
+    /// Serialize `value` as pretty JSON to `path`. Best-effort: every failure (unwritable
+    /// path, serialization) is ignored so capture can never affect the running app.
+    fn write_json<T: serde::Serialize>(path: std::path::PathBuf, value: &T) {
+        if let Ok(json) = serde_json::to_string_pretty(value) {
             let _ = std::fs::write(path, json);
         }
     }
@@ -178,10 +204,10 @@ struct Session {
     /// Names/MMR/stats cached per match id (+ state) so an in-match presence update (score
     /// changes every round) does not refetch them (L1).
     cache: MatchCache,
-    /// HS% cached across matches within the session, keyed by puuid + the player's newest
-    /// competitive match id — so a returning player's ~500 KB match-details are not
+    /// HS% + KD cached across matches within the session, keyed by puuid + the player's
+    /// newest competitive match id — so a returning player's ~500 KB match-details are not
     /// re-downloaded while their newest match is unchanged (phase 2 constraint).
-    hs_cache: HsCache,
+    recent_stats_cache: RecentStatsCache,
 }
 
 /// Per-match cache of the expensive per-player lookups. Keyed by match id AND whether the
@@ -201,8 +227,8 @@ struct MatchCache {
     mmr: HashMap<String, MmrResponse>,
     /// puuid -> ΔRR + last-5 pips (phase 2).
     updates: HashMap<String, RrHistory>,
-    /// puuid -> HS% over recent matches (phase 2; inner None == "N/a").
-    headshots: HashMap<String, Option<u32>>,
+    /// puuid -> HS% + KD over recent matches (phase 2; inner None == "N/a").
+    recent_stats: HashMap<String, RecentStats>,
     /// puuid -> equipped Vandal/Phantom skin uuids (phase 2, INGAME only).
     skins: HashMap<String, PlayerSkinIds>,
 }
@@ -233,7 +259,7 @@ impl MatchCache {
             self.names.clear();
             self.mmr.clear();
             self.updates.clear();
-            self.headshots.clear();
+            self.recent_stats.clear();
             self.skins.clear();
         }
         self.match_id = Some(match_id.to_string());
@@ -247,25 +273,26 @@ impl MatchCache {
     }
 }
 
-/// Session-lived HS% cache: puuid -> (newest competitive match id it was computed from,
-/// the HS%). Persists across matches (NOT cleared on MENUS) so it self-invalidates only
-/// when a player's newest competitive match changes.
+/// Session-lived match-details stat cache: puuid -> (newest competitive match id the stats
+/// were computed from, the HS% + KD they yielded). Both figures come from the same payloads,
+/// so they share one entry. Persists across matches (NOT cleared on MENUS) so it
+/// self-invalidates only when a player's newest competitive match changes.
 #[derive(Default)]
-struct HsCache {
-    map: HashMap<String, (String, Option<u32>)>,
+struct RecentStatsCache {
+    map: HashMap<String, (String, RecentStats)>,
 }
 
-impl HsCache {
-    /// Cached HS% for `puuid` iff it was computed from the same `newest_match_id`.
-    fn get(&self, puuid: &str, newest_match_id: &str) -> Option<Option<u32>> {
+impl RecentStatsCache {
+    /// Cached stats for `puuid` iff they were computed from the same `newest_match_id`.
+    fn get(&self, puuid: &str, newest_match_id: &str) -> Option<RecentStats> {
         self.map
             .get(puuid)
             .filter(|(id, _)| id == newest_match_id)
-            .map(|(_, hs)| *hs)
+            .map(|(_, stats)| *stats)
     }
 
-    fn put(&mut self, puuid: &str, newest_match_id: &str, hs: Option<u32>) {
-        self.map.insert(puuid.to_string(), (newest_match_id.to_string(), hs));
+    fn put(&mut self, puuid: &str, newest_match_id: &str, stats: RecentStats) {
+        self.map.insert(puuid.to_string(), (newest_match_id.to_string(), stats));
     }
 }
 
@@ -343,7 +370,7 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
         season_id,
         seasons,
         cache: MatchCache::default(),
-        hs_cache: HsCache::default(),
+        recent_stats_cache: RecentStatsCache::default(),
     })
 }
 
@@ -458,10 +485,26 @@ async fn build_and_publish(session: &mut Session, ctx: &mut BuildCtx<'_>) -> boo
     }
 }
 
+/// Fetch the presence roster for one rebuild. In dev capture mode the untouched response
+/// body is dumped alongside the snapshots (see `docs/testing.md`); everywhere else it is a
+/// plain roster fetch, with no extra clone or serialization.
+async fn fetch_presences(local: &LocalClient) -> Result<Vec<presence::RawPresence>> {
+    #[cfg(debug_assertions)]
+    {
+        let (presences, raw) = local.presences_with_raw(debug_capture::enabled()).await?;
+        if let Some(raw) = raw {
+            debug_capture::write_presences(&raw);
+        }
+        Ok(presences)
+    }
+    #[cfg(not(debug_assertions))]
+    Ok(local.presences_with_raw(false).await?.0)
+}
+
 /// Build (and publish) a full snapshot for the current state (Menus / Pregame / Ingame).
 /// Returns true if enrichment was interrupted (see `build_and_publish`).
 async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result<bool> {
-    let presences = session.local.presences().await?;
+    let presences = fetch_presences(&session.local).await?;
     let own = presences
         .iter()
         .find(|p| p.puuid == session.own_puuid && p.is_valorant());
@@ -515,7 +558,7 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
 
 /// Fetch + assemble a pregame or coregame snapshot, using the two-phase emit: the first
 /// snapshot carries names + ranks + RR + peak + WR (all free once names+MMR are in) with
-/// the heavy fields (rrChange / recentResults / headshotPercent / skins) empty; a second,
+/// the heavy fields (rrChange / recentResults / headshotPercent / kd / skins) empty; a second,
 /// enriched snapshot follows once those are fetched. Returns true if enrichment aborted on
 /// a mid-burst poke (HIGH-2).
 async fn build_match_snapshot(
@@ -587,11 +630,11 @@ async fn build_match_snapshot(
     );
     publish(ctx.state, ctx.emitter, snap1);
 
-    // === Phase 2: competitiveupdates + HS% + loadout skins. Interruptible. ===
+    // === Phase 2: competitiveupdates + HS%/KD + loadout skins. Interruptible. ===
     let interrupted = fetch_phase2(
         &session.remote,
         &mut session.cache,
-        &mut session.hs_cache,
+        &mut session.recent_stats_cache,
         &puuids,
         ingame,
         &match_id,
@@ -631,7 +674,7 @@ fn assemble_snapshot(
         mmr: &session.cache.mmr,
         parties,
         updates: &session.cache.updates,
-        headshots: &session.cache.headshots,
+        recent_stats: &session.cache.recent_stats,
         skins: &session.cache.skins,
         static_data: &session.static_data,
         own_puuid: &session.own_puuid,
@@ -751,7 +794,8 @@ async fn fetch_phase1(
 }
 
 /// Phase 2 of the two-phase emit: competitiveupdates (ΔRR + last-5 + recent match ids),
-/// HS% (throttled + session-cached), and — INGAME only — loadout skins. Only puuids not
+/// HS% + KD (throttled + session-cached, both from the same match-details), and — INGAME
+/// only — loadout skins. Only puuids not
 /// already cached are fetched (HIGH-1 reuse of pregame data + resume-after-abort). Between
 /// per-player requests it checks the poke channel and returns `Ok(true)` to abort promptly
 /// when a new presence event arrives, so a dodge/transition is not blocked behind the
@@ -762,7 +806,7 @@ async fn fetch_phase1(
 async fn fetch_phase2(
     remote: &RemoteClient,
     cache: &mut MatchCache,
-    hs_cache: &mut HsCache,
+    recent_stats_cache: &mut RecentStatsCache,
     puuids: &[String],
     ingame: bool,
     match_id: &str,
@@ -795,22 +839,23 @@ async fn fetch_phase2(
         }
     }
 
-    // HS%: up to RECENT_MATCHES_FOR_HS match-details per player missing it, session-cached.
+    // HS% + KD: up to RECENT_MATCHES_FOR_HS match-details per player missing them,
+    // session-cached. Both figures come out of the same payloads — KD adds no request.
     for puuid in puuids {
-        if cache.headshots.contains_key(puuid) {
+        if cache.recent_stats.contains_key(puuid) {
             continue;
         }
         if abort_pending(rx, ingame) {
             return Ok(true);
         }
         let Some(newest) = cache.updates.get(puuid).and_then(|h| h.newest_match_id()) else {
-            // No recent competitive matches -> HS% is "N/a".
-            cache.headshots.insert(puuid.clone(), None);
+            // No recent competitive matches -> HS% is "N/a" and KD is null.
+            cache.recent_stats.insert(puuid.clone(), RecentStats::default());
             continue;
         };
         // Session cache hit (same newest match) -> reuse, no match-details fetch.
-        if let Some(hs) = hs_cache.get(puuid, newest) {
-            cache.headshots.insert(puuid.clone(), hs);
+        if let Some(stats) = recent_stats_cache.get(puuid, newest) {
+            cache.recent_stats.insert(puuid.clone(), stats);
             continue;
         }
         // Cache miss -> fetch up to N match-details and accumulate this player's hits.
@@ -820,7 +865,7 @@ async fn fetch_phase2(
             .get(puuid)
             .map(|h| h.recent_match_ids.clone())
             .unwrap_or_default();
-        let mut acc = HitCounts::default();
+        let mut acc = MatchTotals::default();
         for mid in &match_ids {
             if abort_pending(rx, ingame) {
                 return Ok(true);
@@ -830,14 +875,14 @@ async fn fetch_phase2(
             }
             sent_any = true;
             match with_rate_limit_retry(|| remote.match_details(mid)).await {
-                Ok(v) => stats::accumulate_match_hits(&mut acc, &v, puuid),
+                Ok(v) => stats::accumulate_match_totals(&mut acc, &v, puuid),
                 Err(Error::BadClaims) => return Err(Error::BadClaims),
                 Err(_) => { /* skip this match, keep whatever we have */ }
             }
         }
-        let hs = acc.headshot_percent();
-        hs_cache.put(puuid, &newest, hs);
-        cache.headshots.insert(puuid.clone(), hs);
+        let recent = acc.recent_stats();
+        recent_stats_cache.put(puuid, &newest, recent);
+        cache.recent_stats.insert(puuid.clone(), recent);
     }
 
     // Loadout skins: one request per match, INGAME only.
@@ -989,17 +1034,19 @@ mod tests {
     }
 
     #[test]
-    fn hs_cache_hits_only_on_matching_newest_match() {
-        let mut hs = HsCache::default();
+    fn recent_stats_cache_hits_only_on_matching_newest_match() {
+        let mut cache = RecentStatsCache::default();
         // Miss when empty.
-        assert_eq!(hs.get("p", "m1"), None);
+        assert_eq!(cache.get("p", "m1"), None);
 
-        hs.put("p", "m1", Some(25));
+        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28) };
+        cache.put("p", "m1", stats);
         // Hit only when the newest match id matches -> no re-download of match-details.
-        assert_eq!(hs.get("p", "m1"), Some(Some(25)));
+        // HS% and KD ride the same entry (they come from the same payloads).
+        assert_eq!(cache.get("p", "m1"), Some(stats));
         // A newer match for the same player -> miss (must recompute).
-        assert_eq!(hs.get("p", "m2"), None);
+        assert_eq!(cache.get("p", "m2"), None);
         // Persists across matches (not cleared with the per-match cache).
-        assert_eq!(hs.get("p", "m1"), Some(Some(25)));
+        assert_eq!(cache.get("p", "m1"), Some(stats));
     }
 }

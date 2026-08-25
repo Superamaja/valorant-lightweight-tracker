@@ -7,7 +7,7 @@ use crate::riot::loadout::PlayerSkinIds;
 use crate::riot::match_state::MatchPlayer;
 use crate::riot::rank::{self, MmrResponse};
 use crate::riot::static_data::StaticData;
-use crate::riot::stats::RrHistory;
+use crate::riot::stats::{RecentStats, RrHistory};
 use crate::riot::types::PlayerRow;
 use std::collections::HashMap;
 
@@ -22,8 +22,8 @@ pub struct AssembleInput<'a> {
     pub parties: &'a HashMap<String, String>,
     /// puuid -> ΔRR + last-5 pips (phase 2; missing -> no history).
     pub updates: &'a HashMap<String, RrHistory>,
-    /// puuid -> HS% over recent matches (phase 2; missing / inner None -> null).
-    pub headshots: &'a HashMap<String, Option<u32>>,
+    /// puuid -> HS% + KD over recent matches (phase 2; missing / inner None -> null).
+    pub recent_stats: &'a HashMap<String, RecentStats>,
     /// puuid -> equipped Vandal/Phantom skin uuids (phase 2, INGAME only; empty in pregame).
     pub skins: &'a HashMap<String, PlayerSkinIds>,
     pub static_data: &'a StaticData,
@@ -80,8 +80,9 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
             let rr_change = history.and_then(|h| h.rr_change);
             let recent_results = history.map(|h| h.results.clone()).unwrap_or_default();
 
-            // HS% (missing entry or inner None -> null).
-            let headshot_percent = input.headshots.get(&p.puuid).copied().flatten();
+            // HS% + KD, both from the same recent match-details (missing entry or inner
+            // None -> null).
+            let recent = input.recent_stats.get(&p.puuid).copied().unwrap_or_default();
 
             // Skins (INGAME only; resolved uuid -> name/icon via static data).
             let player_skins = input.skins.get(&p.puuid);
@@ -109,7 +110,8 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 win_rate,
                 rr_change,
                 recent_results,
-                headshot_percent,
+                headshot_percent: recent.headshot_percent,
+                kd: recent.kd,
                 vandal_skin,
                 phantom_skin,
             }
@@ -178,7 +180,7 @@ mod tests {
         mmr: HashMap<String, MmrResponse>,
         parties: HashMap<String, String>,
         updates: HashMap<String, RrHistory>,
-        headshots: HashMap<String, Option<u32>>,
+        recent_stats: HashMap<String, RecentStats>,
         skins: HashMap<String, PlayerSkinIds>,
         static_data: StaticData,
         own_team: Option<String>,
@@ -193,7 +195,7 @@ mod tests {
                 mmr: &self.mmr,
                 parties: &self.parties,
                 updates: &self.updates,
-                headshots: &self.headshots,
+                recent_stats: &self.recent_stats,
                 skins: &self.skins,
                 static_data: &self.static_data,
                 own_puuid,
@@ -366,23 +368,37 @@ mod tests {
                 recent_match_ids: vec!["m1".into()],
             },
         );
-        let mut headshots = HashMap::new();
-        headshots.insert("me".to_string(), Some(25));
+        let mut recent_stats = HashMap::new();
+        recent_stats
+            .insert("me".to_string(), RecentStats { headshot_percent: Some(25), kd: Some(1.28) });
         let mut skins = HashMap::new();
         skins.insert(
             "me".to_string(),
             PlayerSkinIds { vandal: Some("van".into()), phantom: None },
         );
         let case =
-            Case { updates, headshots, skins, own_team: Some("Blue".into()), ..Default::default() };
+            Case { updates, recent_stats, skins, own_team: Some("Blue".into()), ..Default::default() };
         let rows = case.run(&players, "me");
         let me = row(&rows, "me");
         assert_eq!(me.rr_change, Some(13));
         assert_eq!(me.recent_results.len(), 2);
         assert_eq!(me.headshot_percent, Some(25));
+        assert_eq!(me.kd, Some(1.28));
         // Skin id present but static data empty -> resolves to an (empty-name) SkinInfo.
         assert!(me.vandal_skin.is_some());
         assert!(me.phantom_skin.is_none());
+    }
+
+    #[test]
+    fn missing_recent_stats_leave_hs_and_kd_null() {
+        // Phase-1 rows (nothing gathered yet) and players with no recent matches both land
+        // here: no entry in the map -> both figures null, no other field affected.
+        let players = vec![base_player("me", "Blue")];
+        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        let me = row(&rows, "me");
+        assert_eq!(me.headshot_percent, None);
+        assert_eq!(me.kd, None);
     }
 
     #[test]

@@ -27,7 +27,8 @@ not JSON means "no debug snapshot" and the hook falls through to the normal IPC 
 
 The converse also holds: the Tauri dev window runs off the same Vite dev server, so **while
 `public/debug-snapshot.json` exists, `pnpm tauri dev` renders the debug data too**, not live
-data, with no visual tell. Delete or rename the file to go back to live. (Release builds are
+data, with no visual tell. Delete or rename the file to go back to live — the convention is prefixing
+an underscore (`_debug-snapshot.json`, also gitignored) so it can be flipped back later. (Release builds are
 unaffected either way — the loader is compiled out.)
 
 ## 2. Capturing real snapshots from a live game
@@ -40,8 +41,11 @@ pnpm tauri dev
 Every published snapshot is also written as pretty JSON to that directory (relative paths are
 relative to `src-tauri/`, so `"debug"` lands in `src-tauri/debug/`; pass an absolute path to
 put it elsewhere). Files are named `snapshot-{counter:04}-{status}.json`, e.g.
-`snapshot-0007-Ingame.json`, counter in emission order. Writing is best-effort: any failure is
-ignored and never affects the app.
+`snapshot-0007-Ingame.json`, counter in emission order. Each rebuild also dumps the raw
+`/chat/v4/presences` response body as `presences-{counter:04}.json` (undecoded, so the full
+roster membership and unknown fields survive — used to diagnose party grouping). The counter
+is shared between both kinds, so files interleave in write order. Writing is best-effort: any
+failure is ignored and never affects the app.
 
 Play a match, quit, then pick a file out of that directory and copy it over for UI work:
 

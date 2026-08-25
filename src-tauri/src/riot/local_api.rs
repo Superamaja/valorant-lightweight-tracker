@@ -94,18 +94,23 @@ impl LocalClient {
         serde_json::from_value(body).map_err(Error::from)
     }
 
-    /// Fetch all current presences.
-    pub async fn presences(&self) -> Result<Vec<RawPresence>> {
+    /// Fetch all current presences, optionally handing back the untouched response body
+    /// alongside the parsed roster. The body is cloned only when `raw` is set, so the
+    /// normal path (`raw == false`) pays nothing — it exists for the dev-only capture
+    /// (`docs/testing.md`), where unknown/undecoded fields are what needs inspecting.
+    pub async fn presences_with_raw(&self, raw: bool) -> Result<(Vec<RawPresence>, Option<Value>)> {
         let body = self.get("/chat/v4/presences").await?;
+        let captured = if raw { Some(body.clone()) } else { None };
         let list = body
             .get("presences")
             .and_then(|p| p.as_array())
             .cloned()
             .unwrap_or_default();
-        Ok(list
+        let presences = list
             .into_iter()
             .filter_map(|v| serde_json::from_value::<RawPresence>(v).ok())
-            .collect())
+            .collect();
+        Ok((presences, captured))
     }
 }
 
