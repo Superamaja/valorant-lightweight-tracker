@@ -20,14 +20,21 @@ pub enum Error {
     #[error("resource not found (state-transition race)")]
     ResourceNotFound,
 
+    /// An HTTP 429, carrying the server's `Retry-After` delay in seconds when it sent a usable
+    /// one, so the backoff can be exactly as long as we were asked to wait.
     #[error("rate limited")]
-    RateLimited,
+    RateLimited(Option<u64>),
 
     #[error("http error: {0}")]
     Http(String),
 
     #[error("websocket error: {0}")]
     WebSocket(String),
+
+    /// A well-formed JSON body whose CONTENT is unusable (e.g. a match payload with no
+    /// players). Distinct from `Json`, which is a serde shape failure.
+    #[error("malformed payload: {0}")]
+    MalformedPayload(String),
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),

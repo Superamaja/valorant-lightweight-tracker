@@ -2,7 +2,7 @@
 //! Parsing/lookup functions are pure and fixture-testable; fetching/caching is IO.
 
 use crate::riot::constants::{PHANTOM_WEAPON_ID, VANDAL_WEAPON_ID};
-use crate::riot::error::Result;
+use crate::riot::error::{Error, Result};
 use crate::riot::rank::tier_name;
 use crate::riot::types::{AgentInfo, MapInfo, RankInfo, SkinInfo};
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,17 @@ pub struct StaticData {
 }
 
 impl StaticData {
+    /// Whether every mapping actually got populated. Only a complete blob may reach the
+    /// version-keyed disk cache, and a cache file that fails this is treated as absent, so a
+    /// bad cache entry self-heals on the next fetch for that version.
+    pub fn is_complete(&self) -> bool {
+        !self.version.is_empty()
+            && !self.agents.is_empty()
+            && !self.maps.is_empty()
+            && !self.tiers.is_empty()
+            && !self.skins.is_empty()
+    }
+
     /// Resolve an agent uuid (any case) to display-ready info. None -> None.
     pub fn agent(&self, character_id: Option<&str>) -> Option<AgentInfo> {
         let id = character_id?.to_lowercase();
@@ -276,11 +287,13 @@ fn cache_file(version: &str) -> Option<std::path::PathBuf> {
     Some(p)
 }
 
-/// Load cached static data for `version` from disk, if present and valid.
+/// Load cached static data for `version` from disk, if present, valid AND complete. An
+/// incomplete file is reported as absent so the next fetch overwrites it.
 pub fn load_cache(version: &str) -> Option<StaticData> {
     let path = cache_file(version)?;
     let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let data: StaticData = serde_json::from_slice(&bytes).ok()?;
+    data.is_complete().then_some(data)
 }
 
 /// Persist static data to the version-keyed cache file.
@@ -295,29 +308,71 @@ pub fn save_cache(data: &StaticData) -> Result<()> {
     Ok(())
 }
 
+/// Whether a valorant-api payload carries a usable, non-empty `data` array. A JSON error body
+/// (429/5xx) has no such array, and an empty one means the endpoint answered with nothing
+/// worth caching. Pure — testable.
+fn has_data_array(value: &Value) -> bool {
+    value.get("data").and_then(|d| d.as_array()).is_some_and(|a| !a.is_empty())
+}
+
+/// GET one valorant-api path, rejecting a non-2xx status so an error body can never be parsed
+/// as a payload and cached under a valid version.
+async fn fetch_json(client: &reqwest::Client, path: &str) -> Result<Value> {
+    let resp = client.get(format!("{VALORANT_API}/{path}")).send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(Error::Http(format!("valorant-api /{path} status {}", status.as_u16())));
+    }
+    Ok(resp.json().await?)
+}
+
+/// `fetch_json` plus the payload-sanity check for the list endpoints.
+async fn fetch_list(client: &reqwest::Client, path: &str) -> Result<Value> {
+    let body = fetch_json(client, path).await?;
+    if !has_data_array(&body) {
+        return Err(Error::MalformedPayload(format!("valorant-api /{path} returned no data")));
+    }
+    Ok(body)
+}
+
+/// Fetch just `riotClientVersion` — the bootstrap value for the remote request headers and the
+/// key the static cache is stored under. Kept separate so a session whose full static fetch
+/// failed can still send a valid client version.
+pub async fn fetch_version(client: &reqwest::Client) -> Result<String> {
+    let version_json = fetch_json(client, "version").await?;
+    match parse_version(&version_json) {
+        Some(v) if !v.is_empty() => Ok(v),
+        _ => Err(Error::MalformedPayload(
+            "valorant-api /version has no riotClientVersion".into(),
+        )),
+    }
+}
+
 /// Fetch + parse all static data from valorant-api.com, using the disk cache when the
 /// version already matches. `client` is an ordinary reqwest client (public host, valid TLS).
+/// Any failed or empty endpoint fails the whole fetch and writes NOTHING to the cache, so a
+/// bad patch-day response can't leave empty mappings pinned to a valid version; the
+/// caller degrades to unresolved names/icons and a later attempt fills them in.
 pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
-    let version_json: Value = client.get(format!("{VALORANT_API}/version")).send().await?.json().await?;
-    let version = parse_version(&version_json).unwrap_or_default();
+    let version = fetch_version(client).await?;
 
-    if !version.is_empty() {
-        if let Some(cached) = load_cache(&version) {
-            return Ok(cached);
-        }
+    if let Some(cached) = load_cache(&version) {
+        return Ok(cached);
     }
 
-    let agents: Value =
-        client.get(format!("{VALORANT_API}/agents?isPlayableCharacter=true")).send().await?.json().await?;
-    let maps: Value = client.get(format!("{VALORANT_API}/maps")).send().await?.json().await?;
-    let tiers: Value =
-        client.get(format!("{VALORANT_API}/competitivetiers")).send().await?.json().await?;
+    let agents = fetch_list(client, "agents?isPlayableCharacter=true").await?;
+    let maps = fetch_list(client, "maps").await?;
+    let tiers = fetch_list(client, "competitivetiers").await?;
     // `/weapons` (not `/weapons/skins`) so we can filter to just the Vandal + Phantom skins
     // by their parent weapon uuid — far smaller than the ~5k-entry full skin list.
-    let weapons: Value =
-        client.get(format!("{VALORANT_API}/weapons")).send().await?.json().await?;
+    let weapons = fetch_list(client, "weapons").await?;
 
     let data = build(version, &agents, &maps, &tiers, &weapons);
+    // A payload that parsed to nothing usable (shape change, filtered-away skins) is as bad as
+    // a failed fetch: don't cache it.
+    if !data.is_complete() {
+        return Err(Error::MalformedPayload("valorant-api payloads parsed to empty mappings".into()));
+    }
     let _ = save_cache(&data); // best-effort cache write
     Ok(data)
 }
@@ -435,6 +490,40 @@ mod tests {
         assert_eq!(r.tier, 0);
         assert_eq!(r.name, "Unranked");
         assert_eq!(r.icon_url.as_deref(), Some("https://x/unranked.png"));
+    }
+
+    #[test]
+    fn rejects_payloads_without_a_usable_data_array() {
+        // A JSON error body (429/5xx) or an empty list must never reach the cache.
+        assert!(!has_data_array(&json!({ "status": 429, "error": "rate limited" })));
+        assert!(!has_data_array(&json!({ "data": [] })));
+        assert!(!has_data_array(&json!({ "data": { "riotClientVersion": "x" } })));
+        assert!(!has_data_array(&json!({})));
+        assert!(has_data_array(&json!({ "data": [ { "uuid": "a" } ] })));
+    }
+
+    #[test]
+    fn empty_mappings_are_never_complete() {
+        // A blob missing any mapping is treated as absent on load, which self-heals a
+        // poisoned cache file on the next fetch.
+        assert!(!StaticData::default().is_complete());
+        let agents = json!({ "data": [
+            { "uuid": "a", "displayName": "Reyna", "isPlayableCharacter": true }
+        ]});
+        let maps = json!({ "data": [ { "mapUrl": "/Game/Maps/Ascent/Ascent", "displayName": "Ascent" } ]});
+        let tiers = json!({ "data": [ { "tiers": [ { "tier": 27, "largeIcon": "n.png" } ] } ]});
+        let weapons = json!({ "data": [
+            { "uuid": VANDAL_WEAPON_ID, "skins": [ { "uuid": "s", "displayName": "Neptune" } ] }
+        ]});
+        // Every payload present but one -> still incomplete.
+        assert!(!build("v".into(), &json!({}), &maps, &tiers, &weapons).is_complete());
+        assert!(!build("v".into(), &agents, &json!({}), &tiers, &weapons).is_complete());
+        assert!(!build("v".into(), &agents, &maps, &json!({}), &weapons).is_complete());
+        assert!(!build("v".into(), &agents, &maps, &tiers, &json!({})).is_complete());
+        // An unnamed version is unusable as a cache key.
+        assert!(!build(String::new(), &agents, &maps, &tiers, &weapons).is_complete());
+        // All four present -> cacheable.
+        assert!(build("v".into(), &agents, &maps, &tiers, &weapons).is_complete());
     }
 
     #[test]

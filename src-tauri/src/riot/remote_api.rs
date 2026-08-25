@@ -91,7 +91,13 @@ impl RemoteClient {
     async fn handle(resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
         if status.as_u16() == 429 {
-            return Err(Error::RateLimited);
+            // Carry the server's own backoff up to the retry wrapper.
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_retry_after);
+            return Err(Error::RateLimited(retry_after));
         }
         let body: Value = resp.json().await.unwrap_or(Value::Null);
         map_body_error(status.as_u16(), body)
@@ -150,6 +156,18 @@ impl RemoteClient {
     }
 }
 
+/// Longest `Retry-After` we honor. A server (or proxy) asking for minutes would otherwise
+/// stall a rebuild well past the point where the match state has moved on.
+pub const MAX_RETRY_AFTER_SECS: u64 = 30;
+
+/// Parse a `Retry-After` header in its delay-seconds form, capped at `MAX_RETRY_AFTER_SECS`.
+/// The HTTP-date form is not emitted by Riot's edge and is ignored (the caller then falls back
+/// to its own backoff). Pure — testable.
+pub fn parse_retry_after(value: &str) -> Option<u64> {
+    let secs: u64 = value.trim().parse().ok()?;
+    Some(secs.min(MAX_RETRY_AFTER_SECS))
+}
+
 /// Map an HTTP status + body into our error taxonomy (or pass the body through on success).
 pub fn map_body_error(status: u16, body: Value) -> Result<Value> {
     if let Some(code) = body.get("errorCode").and_then(|v| v.as_str()) {
@@ -161,7 +179,11 @@ pub fn map_body_error(status: u16, body: Value) -> Result<Value> {
     }
     match status {
         404 => Err(Error::ResourceNotFound),
-        429 => Err(Error::RateLimited),
+        429 => Err(Error::RateLimited(None)),
+        // Spec §10.3: a stale bearer/entitlements pair is what 401/403 actually mean, so they
+        // become the token-refresh signal instead of a generic transport error — the caller's
+        // single refresh-and-retry arm then covers them.
+        401 | 403 => Err(Error::BadClaims),
         s if (200..300).contains(&s) => Ok(body),
         s => Err(Error::Http(format!("remote status {s}"))),
     }
@@ -225,7 +247,30 @@ mod tests {
 
     #[test]
     fn maps_rate_limit() {
-        assert!(matches!(map_body_error(429, json!({})), Err(Error::RateLimited)));
+        // The body-only path knows no header, so the caller falls back to its own backoff.
+        assert!(matches!(map_body_error(429, json!({})), Err(Error::RateLimited(None))));
+    }
+
+    #[test]
+    fn maps_auth_statuses_to_the_refresh_signal() {
+        // 401/403 must reach the token-refresh arm, not degrade to `Http`.
+        assert!(matches!(map_body_error(401, json!({})), Err(Error::BadClaims)));
+        assert!(matches!(map_body_error(403, json!({})), Err(Error::BadClaims)));
+        // Everything else non-OK stays a generic transport error.
+        assert!(matches!(map_body_error(500, json!({})), Err(Error::Http(_))));
+    }
+
+    #[test]
+    fn parses_and_caps_retry_after() {
+        assert_eq!(parse_retry_after("5"), Some(5));
+        assert_eq!(parse_retry_after("  12 "), Some(12));
+        assert_eq!(parse_retry_after("0"), Some(0));
+        // Capped so a huge (or hostile) value can't stall a rebuild.
+        assert_eq!(parse_retry_after("600"), Some(MAX_RETRY_AFTER_SECS));
+        // HTTP-date form and junk are ignored -> caller uses its own backoff.
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(parse_retry_after("-3"), None);
+        assert_eq!(parse_retry_after(""), None);
     }
 
     #[test]

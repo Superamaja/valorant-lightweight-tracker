@@ -82,6 +82,17 @@ pub fn read() -> Result<Lockfile> {
     }
 }
 
+/// True when the lockfile on disk still describes the client `current` was read from.
+///
+/// A fast Riot Client restart rewrites the SAME path with a new pid, port and password, so a
+/// bare "does the path exist" check leaves a session talking to a dead endpoint forever.
+/// Re-reading and comparing costs one small file read, cheap enough for the
+/// reconnect cadence. A missing, unreadable or half-written lockfile is "not current" too —
+/// the client is either gone or being replaced, and either way the session must restart.
+pub fn still_current(current: &Lockfile) -> bool {
+    read().is_ok_and(|disk| disk == *current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +133,21 @@ mod tests {
         let expected = base64::engine::general_purpose::STANDARD
             .encode(b"riot:Ss4WWtBoLIdaOoYm1FLKGw");
         assert_eq!(lf.basic_auth_header(), format!("Basic {expected}"));
+    }
+
+    #[test]
+    fn credential_changes_make_a_different_lockfile() {
+        // The staleness rule behind `still_current`: a restarted client keeps the path but
+        // changes pid/port/password, and any one of those must read as a different client.
+        let original = Lockfile::parse(SAMPLE).unwrap();
+        assert_eq!(Lockfile::parse(SAMPLE).unwrap(), original);
+        for changed in [
+            "Riot Client:99999:52995:Ss4WWtBoLIdaOoYm1FLKGw:https", // new pid
+            "Riot Client:23144:60001:Ss4WWtBoLIdaOoYm1FLKGw:https", // new port
+            "Riot Client:23144:52995:0000000000000000000000:https", // new password
+        ] {
+            assert_ne!(Lockfile::parse(changed).unwrap(), original);
+        }
     }
 
     #[test]

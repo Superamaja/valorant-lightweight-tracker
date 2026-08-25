@@ -1,7 +1,8 @@
 //! Pregame / coregame match parsing. Pure functions over the glz match payloads;
 //! network fetching lives in `remote_api`. See spec §5.
 
-use serde::Deserialize;
+use crate::riot::error::{Error, Result};
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 /// A player extracted from a pregame or coregame match.
@@ -47,6 +48,16 @@ struct PlayerIdentityWire {
     hide_account_level: bool,
 }
 
+/// Deserialize `PlayerIdentity` leniently: a shape we don't understand becomes `None`
+/// (privacy-safe defaults below) instead of failing the whole roster.
+fn lenient_identity<'de, D>(d: D) -> std::result::Result<Option<PlayerIdentityWire>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(d)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct PlayerWire {
     #[serde(rename = "Subject", default)]
@@ -57,7 +68,7 @@ struct PlayerWire {
     character_id: String,
     #[serde(rename = "CharacterSelectionState", default)]
     character_selection_state: String,
-    #[serde(rename = "PlayerIdentity", default)]
+    #[serde(rename = "PlayerIdentity", default, deserialize_with = "lenient_identity")]
     player_identity: Option<PlayerIdentityWire>,
 }
 
@@ -73,9 +84,11 @@ impl PlayerWire {
             } else {
                 None
             },
+            // A missing / unparseable PlayerIdentity degrades toward PRIVACY, never toward
+            // exposure: unknown level, treated as incognito with a hidden level.
             account_level: identity.as_ref().map(|i| i.account_level).unwrap_or(0),
-            incognito: identity.as_ref().map(|i| i.incognito).unwrap_or(false),
-            hide_account_level: identity.map(|i| i.hide_account_level).unwrap_or(false),
+            incognito: identity.as_ref().map(|i| i.incognito).unwrap_or(true),
+            hide_account_level: identity.map(|i| i.hide_account_level).unwrap_or(true),
         }
     }
 }
@@ -109,23 +122,29 @@ struct CoregameWire {
 }
 
 /// Parse a coregame match. `own_team` is the team `own_puuid` is on. Consumes `value`
-/// (no deep clone).
-pub fn extract_coregame(value: Value, own_puuid: &str) -> CoregameData {
-    let wire: CoregameWire = serde_json::from_value(value).unwrap_or(CoregameWire {
-        map_id: String::new(),
-        players: Vec::new(),
-    });
-    let players: Vec<MatchPlayer> =
-        wire.players.into_iter().map(|p| p.into_match_player(false)).collect();
+/// (no deep clone). A payload that does not deserialize, or that carries no usable players,
+/// is an ERROR rather than an empty lobby — the caller retries instead of caching a
+/// bogus "complete" match.
+pub fn extract_coregame(value: Value, own_puuid: &str) -> Result<CoregameData> {
+    let wire: CoregameWire = serde_json::from_value(value)?;
+    let players: Vec<MatchPlayer> = wire
+        .players
+        .into_iter()
+        .filter(|p| !p.subject.is_empty())
+        .map(|p| p.into_match_player(false))
+        .collect();
+    if players.is_empty() {
+        return Err(Error::MalformedPayload("coregame match has no players".into()));
+    }
     let own_team = players
         .iter()
         .find(|p| p.puuid == own_puuid)
         .map(|p| p.team.clone());
-    CoregameData {
+    Ok(CoregameData {
         map_id: none_if_empty(wire.map_id),
         players,
         own_team,
-    }
+    })
 }
 
 // --- pregame ----------------------------------------------------------------
@@ -151,12 +170,10 @@ struct PregameWire {
 /// Parse a pregame match. Only `AllyTeam.Players` exists during agent select — enemies
 /// are never exposed here (hard platform limit). `own_team` comes from AllyTeam.TeamID,
 /// falling back to searching `Teams` for `own_puuid`. Consumes `value` (no deep clone).
-pub fn extract_pregame(value: Value, own_puuid: &str) -> PregameData {
-    let wire: PregameWire = serde_json::from_value(value).unwrap_or(PregameWire {
-        map_id: String::new(),
-        ally_team: None,
-        teams: Vec::new(),
-    });
+/// A payload that does not deserialize, or that carries no usable ally players, is an ERROR
+/// rather than an empty lobby.
+pub fn extract_pregame(value: Value, own_puuid: &str) -> Result<PregameData> {
+    let wire: PregameWire = serde_json::from_value(value)?;
 
     // own_team: AllyTeam.TeamID first, else search Teams for the puuid.
     let own_team = wire
@@ -182,6 +199,7 @@ pub fn extract_pregame(value: Value, own_puuid: &str) -> PregameData {
         .map(|t| {
             t.players
                 .iter()
+                .filter(|p| !p.subject.is_empty())
                 .cloned()
                 .map(|p| {
                     let mut player = p.into_match_player(true);
@@ -194,11 +212,15 @@ pub fn extract_pregame(value: Value, own_puuid: &str) -> PregameData {
         })
         .unwrap_or_default();
 
-    PregameData {
+    if players.is_empty() {
+        return Err(Error::MalformedPayload("pregame match has no ally players".into()));
+    }
+
+    Ok(PregameData {
         map_id: none_if_empty(wire.map_id),
         players,
         own_team,
-    }
+    })
 }
 
 fn none_if_empty(s: String) -> Option<String> {
@@ -232,7 +254,7 @@ mod tests {
                   "PlayerIdentity": { "AccountLevel": 99, "Incognito": true, "HideAccountLevel": true } }
             ]
         });
-        let data = extract_coregame(payload, "me");
+        let data = extract_coregame(payload, "me").unwrap();
         assert_eq!(data.map_id.as_deref(), Some("/Game/Maps/Ascent/Ascent"));
         assert_eq!(data.own_team.as_deref(), Some("Blue"));
         assert_eq!(data.players.len(), 2);
@@ -250,7 +272,7 @@ mod tests {
     #[test]
     fn coregame_missing_own_puuid_has_no_own_team() {
         let payload = json!({ "Players": [ { "Subject": "x", "TeamID": "Red" } ] });
-        let data = extract_coregame(payload, "me");
+        let data = extract_coregame(payload, "me").unwrap();
         assert_eq!(data.own_team, None);
     }
 
@@ -272,7 +294,7 @@ mod tests {
             },
             "Teams": [ { "TeamID": "Blue", "Players": [ { "Subject": "me" } ] } ]
         });
-        let data = extract_pregame(payload, "me");
+        let data = extract_pregame(payload, "me").unwrap();
         assert_eq!(data.own_team.as_deref(), Some("Blue"));
         assert_eq!(data.players.len(), 2);
         // unselected agent -> None, selection state None (empty)
@@ -298,7 +320,7 @@ mod tests {
                 ]
             }
         });
-        let data = extract_pregame(payload, "me");
+        let data = extract_pregame(payload, "me").unwrap();
         assert_eq!(data.own_team.as_deref(), Some("Blue"));
         assert_eq!(data.players[0].team, "Blue", "wire without TeamID inherits AllyTeam's");
         assert_eq!(data.players[1].team, "Red", "explicit per-player TeamID wins");
@@ -310,7 +332,82 @@ mod tests {
             "AllyTeam": { "Players": [ { "Subject": "me", "TeamID": "Red" } ] },
             "Teams": [ { "TeamID": "Red", "Players": [ { "Subject": "me" } ] } ]
         });
-        let data = extract_pregame(payload, "me");
+        let data = extract_pregame(payload, "me").unwrap();
         assert_eq!(data.own_team.as_deref(), Some("Red"));
+    }
+
+    // --- malformed payloads must error, never become empty lobbies ----
+
+    #[test]
+    fn malformed_coregame_payloads_error() {
+        // Wrong shape for a typed field -> serde failure.
+        assert!(matches!(
+            extract_coregame(json!({ "Players": "nope" }), "me"),
+            Err(Error::Json(_))
+        ));
+        // Valid JSON, but no usable roster -> not a valid empty lobby.
+        for payload in [json!({}), json!({ "Players": [] }), json!({ "Players": [ {} ] })] {
+            assert!(
+                matches!(extract_coregame(payload, "me"), Err(Error::MalformedPayload(_))),
+                "a player-less coregame payload must not parse as an empty lobby"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_pregame_payloads_error() {
+        assert!(matches!(
+            extract_pregame(json!({ "AllyTeam": 7 }), "me"),
+            Err(Error::Json(_))
+        ));
+        for payload in [
+            json!({}),
+            json!({ "AllyTeam": { "TeamID": "Blue", "Players": [] } }),
+            json!({ "Teams": [ { "TeamID": "Blue", "Players": [ { "Subject": "me" } ] } ] }),
+        ] {
+            assert!(
+                matches!(extract_pregame(payload, "me"), Err(Error::MalformedPayload(_))),
+                "a player-less pregame payload must not parse as an empty lobby"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_player_identity_defaults_to_the_private_side() {
+        // No PlayerIdentity at all: treat the row as incognito with a hidden level rather
+        // than exposing a name/level we cannot confirm the player agreed to show.
+        let payload = json!({ "Players": [ { "Subject": "me", "TeamID": "Blue" } ] });
+        let data = extract_coregame(payload, "me").unwrap();
+        assert!(data.players[0].incognito);
+        assert!(data.players[0].hide_account_level);
+        assert_eq!(data.players[0].account_level, 0);
+    }
+
+    #[test]
+    fn unparseable_player_identity_keeps_the_row_and_stays_private() {
+        // A PlayerIdentity of an unexpected shape must not fail the whole roster, and must
+        // not fall through to "exposed".
+        let payload = json!({
+            "Players": [ { "Subject": "me", "TeamID": "Blue", "PlayerIdentity": "garbage" } ]
+        });
+        let data = extract_coregame(payload, "me").unwrap();
+        assert_eq!(data.players.len(), 1);
+        assert!(data.players[0].incognito);
+        assert!(data.players[0].hide_account_level);
+    }
+
+    #[test]
+    fn subject_less_entries_are_skipped_not_rendered() {
+        let payload = json!({
+            "Players": [
+                { "Subject": "", "TeamID": "Red" },
+                { "Subject": "me", "TeamID": "Blue",
+                  "PlayerIdentity": { "AccountLevel": 10, "Incognito": false, "HideAccountLevel": false } }
+            ]
+        });
+        let data = extract_coregame(payload, "me").unwrap();
+        assert_eq!(data.players.len(), 1);
+        assert_eq!(data.players[0].puuid, "me");
+        assert_eq!(data.own_team.as_deref(), Some("Blue"));
     }
 }
