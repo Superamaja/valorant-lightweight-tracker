@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-24. Status: baseline agreed in conversation; no reference images yet — user may supply some later.
 
-> **PROCESS GATE:** Claude does NOT implement or create UI, and does NOT spawn UI subagents. When UI implementation work comes up, Claude writes a complete, ready-to-paste agent prompt (spec, file paths, constraints, verification steps) and hands it to the user — the user runs it themselves with their preferred model and a higher effort level than subagents get. Small mechanical fixes to existing UI (typo, broken import) are fine; anything design/implementation-level goes through the prompt handoff. Fable review after the user's agent finishes still applies (user will ask for it).
+> **PROCESS GATE (revised 2026-08-24):** Claude may now spawn UI implementation subagents directly (the standard implementation model routing is acceptable to the user). The prompt still needs the same rigor as the old handoff prompts: full spec, file paths, constraints, verification steps. Codex review after the agent finishes still applies (the review rule switched from Fable to Codex, 2026-08-24 — see CLAUDE.md). (Historical: UI was previously user-run only — Claude wrote a ready-to-paste prompt and the user ran it with their preferred model at higher effort.)
 
 ## Core principle: images over text
 

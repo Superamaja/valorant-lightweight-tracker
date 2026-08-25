@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 ## Goal
 
@@ -60,12 +60,20 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    snapshots per state change via `VLT_DEBUG_CAPTURE`. Real 10-player enriched captures were
    taken 2026-08-24 and live-verified most of the pipeline (full lobby, skins, act labels,
    hidden levels, unrated-mode rendering, fast->enriched hand-off).
-7. **Open items for the next session** (user finishes the roadmap there):
+7. ~~**Feature batch 2026-08-24/25.**~~ **Done, all Codex-reviewed clean** (review rule switched
+   from Fable to Codex — see CLAUDE.md; UI subagent gate also lifted, see ui-spec.md): tier-0
+   Unranked icon fix, raw presences debug dump, hold-last-match table (Menus keeps the last
+   table + "Last match" chip), and the KD column (same 3-match window as HS%, zero extra
+   requests, `PlayerRow.kd`). Party grouping diagnosed as working-as-possible pending a
+   party-lobby capture — full findings in roadmap.md. All uncommitted as of the session end.
+8. **Open items for the next session** (user finishes the roadmap there):
    - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
      browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
      Consider anonymizing names in the JSON first.
-   - **First release**: `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the
-     workflow's first run on GitHub (never exercised on a real runner).
+   - **First release**: deferred to last (user decision 2026-08-24) — auto-updater must be
+     built before any public release. Order: features + polish first, then auto-updater,
+     then `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the workflow's
+     first run on GitHub (never exercised on a real runner).
    - **Still needing live verification**: party dot colours (needs a party lobby — every
      capture so far was solo), `latam`/`br` shard mapping (needs such an account), flat
      presence shape, pregame-vs-coregame match-id equality (cache upgrade path), and the
