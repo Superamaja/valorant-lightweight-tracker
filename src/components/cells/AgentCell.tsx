@@ -18,7 +18,15 @@ export function AgentCell({
 }) {
   const picking = agent === null && selectionState === SELECTED;
   const locked = agent !== null && selectionState === LOCKED;
-  const label = agent?.name || (picking ? "Picking an agent" : "No agent yet");
+  // Hovered but not locked in — the portrait shows dimmed so a tentative pick reads as such.
+  const hovered = agent !== null && selectionState === SELECTED;
+  const label = agent
+    ? hovered
+      ? `${agent.name} (not locked)`
+      : agent.name
+    : picking
+      ? "Picking an agent"
+      : "No agent yet";
 
   return (
     <div className="relative h-10 w-10">
@@ -26,7 +34,7 @@ export function AgentCell({
         title={label}
         className={`h-full w-full overflow-hidden rounded-md bg-white/[0.03] ring-1 ${
           locked ? "ring-accent/40" : "ring-white/10"
-        } ${picking ? "animate-pulse" : ""}`}
+        } ${picking ? "animate-pulse" : ""} ${hovered ? "opacity-60 saturate-50" : ""}`}
       >
         <Img
           src={agent?.iconUrl ?? null}
