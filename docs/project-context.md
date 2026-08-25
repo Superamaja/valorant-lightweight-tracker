@@ -44,21 +44,35 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    `cargo clippy --all-targets -- -D warnings` all pass; `pnpm build` still passes (frontend
    untouched). Live-verification open items for the full-lobby stat burst are listed in the
    backend spec.
-4. ~~**UI.**~~ **Done — built from `docs/ui-agent-prompt.md` in a user-run session.** `src/`
-   now holds the whole frontend: IPC wiring (`src/ipc/`, `src/hooks/useTracker.ts`), the
-   two-team player table with all eleven columns, and the non-match state screens. Only
-   `src/` and `index.html` were touched. `pnpm build` (tsc + vite) passes; `pnpm tauri dev`
-   opens the window and shows "Waiting for VALORANT" with the game closed. Layout decisions
-   and the points flagged against the IPC contract: `docs/ui-spec.md` -> "Implemented (v1)".
-   **Next: the Fable code review of the frontend.**
-5. **Open — needs live game to verify** (backend could not integration-test; Valorant not
-   running on this machine): `latam`/`br` → `na` shard mapping; that the *last*
-   `competitivetiers` table entry is the current one; and that the presence nested-vs-flat
-   dual paths both fire in the wild. See the new "Implementation notes" in `docs/backend-spec.md`.
-   The UI has the same gap: it was verified against fixture data at 1000x700 (fits with no
-   scrolling, no horizontal overflow) and against the real `ValorantNotRunning` snapshot, but
-   a live ten-player lobby — party colours, the fast → enriched hand-off, real skin art — has
-   not been seen yet.
+4. ~~**UI.**~~ **Done, reviewed, and revised.** Built from `docs/ui-agent-prompt.md` in a
+   user-run session, then Fable-reviewed and iterated: contract-alignment pass (`enriched`
+   flag replaces loading inference; backend owns level withholding), Revision 2 (level badge
+   on a larger agent portrait instead of a Level column, full-size peak rank icon with
+   episode/act label `E6: A3` / `V26: A1`, 48px rows, HS% scope labeled), and live
+   agent-select updates (teammates' picks/locks rebuild the pregame roster in real time).
+   Pregame team-split bug (players inheriting no TeamID -> everyone rendered as enemy) fixed
+   and validated against a real agent-select capture.
+5. ~~**Release pipeline.**~~ **Done** (see roadmap "Done" + `docs/release.md`): tag push
+   `v*` -> GitHub Actions builds the portable exe onto a Release; `pnpm bump` syncs the three
+   version files. **First release tag not yet pushed.**
+6. ~~**Debug/testing mode.**~~ **Done** (`docs/testing.md`): UI runs from a JSON snapshot in
+   a plain browser (`public/debug-snapshot.json` + `pnpm dev`); debug builds capture real
+   snapshots per state change via `VLT_DEBUG_CAPTURE`. Real 10-player enriched captures were
+   taken 2026-08-24 and live-verified most of the pipeline (full lobby, skins, act labels,
+   hidden levels, unrated-mode rendering, fast->enriched hand-off).
+7. **Open items for the next session** (user finishes the roadmap there):
+   - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
+     browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
+     Consider anonymizing names in the JSON first.
+   - **First release**: `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the
+     workflow's first run on GitHub (never exercised on a real runner).
+   - **Still needing live verification**: party dot colours (needs a party lobby — every
+     capture so far was solo), `latam`/`br` shard mapping (needs such an account), flat
+     presence shape, pregame-vs-coregame match-id equality (cache upgrade path), and the
+     full-lobby 41-request stat burst under rate limits in a comp match (captures were
+     Spike Rush).
+   - Possible polish noted from the first real-data screenshot: quiet the "Default"/"Default"
+     skin text pairs; heavy N/A texture on no-comp-history rows.
 
 ## Repo layout
 
