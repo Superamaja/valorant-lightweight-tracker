@@ -47,6 +47,13 @@ The exe lands in `src-tauri/target/release/`. This is the same build the
 release workflow runs; see [`docs/release.md`](docs/release.md) for how tagged
 releases are built.
 
+## Development
+
+The UI can run against JSON snapshot data instead of a live game, including in
+a plain browser with no Rust or Valorant at all. Debug builds can also capture
+real snapshots to JSON while you play. See [`docs/testing.md`](docs/testing.md)
+for both workflows.
+
 ## Disclaimer
 
 This project is **not affiliated with, endorsed, sponsored, or approved by Riot
