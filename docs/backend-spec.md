@@ -515,14 +515,19 @@ Applied after a Fable review of the first backend cut:
 - **Reconnect handling.** After every websocket drop the listener task injects a synthetic
   poke so the session re-polls presence (transitions during the outage aren't lost); publishes
   a "Reconnecting…" not-running snapshot immediately (no stale INGAME table); checks lockfile
-  existence each retry to bail at once when the client is gone; and resets the reconnect
+  re-reads and compares the whole lockfile each retry (pid/port/password change = stale
+  session) to bail at once when the client is gone **or replaced**; and resets the reconnect
   backoff after a successful connection.
 - **Token expiry.** `fetch_names`/`fetch_all_mmr` now return `Result` and propagate
   `BAD_CLAIMS` so the initial paint **and** the event loop route it through the same
   refresh-tokens-and-retry-once arm (previously the initial snapshot and the name/MMR paths
   swallowed it).
-- **429 retry.** rank/name fetches do one ~6s backed-off retry on a 429 instead of silently
-  yielding Unranked.
+- **429 retry.** All pd **and glz** calls (names, MMR, competitive-updates, match-details,
+  loadouts, pregame/coregame match-id + match payload) share one 429 wrapper: one backed-off
+  retry honoring the server's `Retry-After` header (delay-seconds form, capped at 30s) and
+  falling back to ~6s. 401/403 responses map to the `BAD_CLAIMS` refresh signal
+  (refresh-once-then-fail). The wrapper sleeps inside the build, so the 1s pregame poll
+  cannot stack attempts while rate-limited. (Audit hardening, 2026-08-25.)
 - **404-race timing.** coregame retries once after ~5s, pregame retries immediately (was 2s
   for both), per §10.5.
 - **Malformed presence.** A single un-parseable presence entry in a websocket batch is skipped,

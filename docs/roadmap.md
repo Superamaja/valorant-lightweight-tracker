@@ -34,6 +34,7 @@ Later work, in rough order. Items move out of here and into project-context.md w
 ## Later
 
 - **Header score display** — live round score is already in the data we fetch: own presence `partyOwnerMatchScoreAllyTeam` / `partyOwnerMatchScoreEnemyTeam`. Nearly free to expose in the snapshot + header.
+- **Chroma-accurate skin icons** (noticed 2026-08-25) — the coregame loadout payload carries a skin-chroma socket alongside the skin id, and valorant-api exposes per-chroma art (`chromas[].fullRender`/`displayIcon`). Read the chroma socket in `loadout.rs`, extend the static skin cache with chroma→icon, fall back to base skin icon when chroma art is missing. Small change, zero extra requests.
 - **Discord RPC** — architecture seam exists; not built (user decision).
 - **vRY upstream check** — user-triggered every few weeks; procedure + last-checked hash live in docs/maintenance.md.
 

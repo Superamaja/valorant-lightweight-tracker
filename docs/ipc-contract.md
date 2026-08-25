@@ -60,7 +60,11 @@ the heavy fields are final.** This supersedes the previous inference of "still l
 data absence (treating a snapshot where no row had any heavy stat as the fast one) — that
 heuristic is no longer needed and must not be used. Once `enriched === true`, a `null`/empty
 heavy field means the player genuinely has no data for it (render the "N/A" placeholder), not
-"still loading". Re-entering an already-loaded match
+"still loading". One bounded exception: if a player's stat fetches keep failing transiently, the
+backend retries the failed players a few times (publishing interim `enriched: false` snapshots),
+then gives up for that lobby and publishes `enriched: true` with the residual nulls — so a null
+under `enriched: true` means "no data obtainable this match", which the UI renders as N/A either
+way. Re-entering an already-loaded match
 (the score changes each round) emits a **single** already-enriched snapshot. A Pregame→Ingame
 transition re-runs the two phases for the now-visible enemy team. All of this rides the
 existing dedup, so listeners need no special handling beyond expecting stats to arrive on a
@@ -176,8 +180,13 @@ interface RankInfo {
 
 ## Field semantics & guarantees
 
-- **Status drives layout.** `ValorantNotRunning` and `Menus` carry an empty `players` array;
-  render the waiting/empty state. `Pregame` carries **only the local player's team** (max 5
+- **Status drives layout.** `ValorantNotRunning` and `Menus` carry an empty `players` array.
+  `ValorantNotRunning` renders the waiting state. For `Menus` the shipped UI intentionally
+  **holds the last match**: if a match table was rendered earlier this app session, plain
+  `Menus` keeps that table on screen with a "Last match" chip in the header instead of the
+  empty state (the empty waiting screen shows only when no match has been seen yet). This is
+  a frontend-only display choice — the `Menus` snapshot itself still carries no players.
+  `Pregame` carries **only the local player's team** (max 5
   rows) — Riot does not expose enemies during agent select; this is a platform limit, not a
   bug. `Ingame` carries the full roster.
 - **Row order is guaranteed by the backend — the UI must NOT re-sort.** `players[]` is always
@@ -247,10 +256,12 @@ interface RankInfo {
 - **`kd`** is total kills / total deaths across the **same** recent competitive matches HS% is
   computed from — it rides those already-downloaded match-details payloads and costs **zero
   extra requests**. Rounded to 2 decimals (e.g. `1.28`); a window with 0 deaths yields the kill
-  count itself (7 kills, 0 deaths -> `7`). `null` in exactly the cases `headshotPercent` is
-  null (no recent competitive matches), plus when the fetched matches carry no per-player stats
-  entry for that player. Render "N/A" for null. It is cached and withheld identically to
-  `headshotPercent` (both come from one payload, so they always appear together).
+  count itself (7 kills, 0 deaths -> `7`). `null` when the player has no recent competitive
+  matches, or when the fetched matches carry no per-player stats entry for that player. Render
+  "N/A" for null. The two fields ride the same payload and are cached/withheld together, but
+  their null cases are **not identical**: `headshotPercent` is also `null` when the window
+  records zero shots, so a row can legitimately show `kd` with an "N/a" HS% — treat each
+  field's null independently.
 - **`vandalSkin` / `phantomSkin`** are populated only in `Ingame` (Riot exposes loadouts only
   once the match starts) — both are `null` in `Pregame` and `Menus`. A `SkinInfo` with an
   empty `name` means the skin uuid was not in the static-data cache (render the icon if
