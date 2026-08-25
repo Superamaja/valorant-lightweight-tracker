@@ -70,8 +70,8 @@ impl LocalClient {
         for attempt in 0..3 {
             match self.get(path).await {
                 Ok(v) => return Ok(v),
-                Err(Error::NotReady) => {
-                    last = Error::NotReady;
+                Err(e) if is_starting_up(&e) => {
+                    last = e;
                     if attempt < 2 {
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
@@ -101,17 +101,23 @@ impl LocalClient {
     pub async fn presences_with_raw(&self, raw: bool) -> Result<(Vec<RawPresence>, Option<Value>)> {
         let body = self.get("/chat/v4/presences").await?;
         let captured = if raw { Some(body.clone()) } else { None };
-        let list = body
+        // Deserialized by reference: the roster is read up to 60x/min in agent select, so the
+        // array is never cloned out of the body first.
+        let presences = body
             .get("presences")
             .and_then(|p| p.as_array())
-            .cloned()
+            .map(|list| list.iter().filter_map(|v| RawPresence::deserialize(v).ok()).collect())
             .unwrap_or_default();
-        let presences = list
-            .into_iter()
-            .filter_map(|v| serde_json::from_value::<RawPresence>(v).ok())
-            .collect();
         Ok((presences, captured))
     }
+}
+
+/// Whether a failed local GET means the client is still starting, so the bounded retry should
+/// take another attempt. Spec §1 counts ANY non-200 (not just 404) or an RPC_ERROR body as "not
+/// ready yet" while the client boots, which is what `Error::Http` carries here. Everything else
+/// (a malformed body, a transport failure) is a different problem and fails at once. Pure.
+fn is_starting_up(err: &Error) -> bool {
+    matches!(err, Error::NotReady | Error::Http(_))
 }
 
 /// True if a local response body is a "client still starting" placeholder.
@@ -146,6 +152,16 @@ mod tests {
     #[test]
     fn ready_body_is_not_flagged() {
         assert!(!is_not_ready(&json!({ "accessToken": "x", "token": "y", "subject": "z" })));
+    }
+
+    #[test]
+    fn any_non_200_is_retried_while_the_client_starts() {
+        // Spec §1: during startup every non-200 (not only 404) reads as "not ready yet".
+        assert!(is_starting_up(&Error::NotReady));
+        assert!(is_starting_up(&Error::Http("local /x -> 503".into())));
+        // A body we could not make sense of, or a dead socket, is a different failure.
+        assert!(!is_starting_up(&Error::MalformedPayload("x".into())));
+        assert!(!is_starting_up(&Error::ResourceNotFound));
     }
 
     #[test]

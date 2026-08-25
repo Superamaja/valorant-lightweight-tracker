@@ -15,10 +15,11 @@ use crate::riot::presence::{self, PresenceInfo};
 use crate::riot::rank::{parse_mmr, MmrResponse};
 use crate::riot::remote_api::{build_hosts, Auth, RemoteClient};
 use crate::riot::static_data::{self, StaticData};
-use crate::riot::stats::{self, MatchTotals, RecentStats, RrHistory};
+use crate::riot::stats::{self, MatchContribution, MatchTotals, RecentStats, RrHistory};
 use crate::riot::types::{AppStatus, MapInfo, SessionLoopState, TrackerSnapshot};
 use crate::riot::websocket::Poke;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -76,10 +77,7 @@ impl TrackerState {
 fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSnapshot) {
     {
         let prev = state.snapshot.lock().unwrap();
-        // Compare ignoring timestamp so identical content doesn't re-fire.
-        let mut cmp = snap.clone();
-        cmp.last_updated = prev.last_updated;
-        if *prev == cmp {
+        if same_content(&prev, &snap) {
             return;
         }
     }
@@ -88,6 +86,30 @@ fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSn
     #[cfg(debug_assertions)]
     debug_capture::write(&snap);
     emitter.emit(&snap);
+}
+
+/// Whether two snapshots carry the same content, ignoring `last_updated` (which differs on
+/// every build). Compared in place, so the dedup costs no clone. The destructuring is
+/// deliberate: a new snapshot field then fails to compile here rather than silently escaping
+/// the comparison. Pure.
+fn same_content(a: &TrackerSnapshot, b: &TrackerSnapshot) -> bool {
+    let TrackerSnapshot {
+        status,
+        map,
+        mode,
+        own_team,
+        players,
+        enriched,
+        last_updated: _,
+        message,
+    } = a;
+    *status == b.status
+        && *map == b.map
+        && *mode == b.mode
+        && *own_team == b.own_team
+        && *players == b.players
+        && *enriched == b.enriched
+        && *message == b.message
 }
 
 /// Dev-only capture of what the tracker saw. Compiled out of release builds entirely, and
@@ -156,28 +178,13 @@ struct BuildCtx<'a> {
     rx: &'a mut mpsc::Receiver<Poke>,
 }
 
-/// Fold one more poke into the strongest seen so far (`Own` outranks `Other`). Pure — this is
-/// the burst-collapse rule, so a mix of own + other events rebuilds once, as an own poke.
-fn collapse(strongest: Option<Poke>, next: Poke) -> Poke {
-    match strongest {
-        Some(s) if s >= next => s,
-        _ => next,
-    }
-}
-
-/// A drained poke warrants a rebuild when it is our own presence event (any state — it can
-/// carry a transition), or when it is another player's and we are in agent select, where
-/// their presence is how a teammate's agent pick becomes visible. Pure.
-fn poke_triggers_rebuild(poke: Poke, status: AppStatus) -> bool {
-    poke == Poke::Own || status == AppStatus::Pregame
-}
-
 /// Agent-select poll cadence (see `poll_interval`).
 const PREGAME_POLL_MS: u64 = 1000;
 
 /// How long the loop may wait for a poke before rebuilding anyway, for a given status.
-/// `Some` only in Pregame: Riot pushes no presence event when a NON-FRIEND lobby player picks
-/// or locks an agent, and our own presence doesn't change either, so agent select would sit
+/// `Some` only in Pregame: Riot pushes no presence event when a lobby player picks or locks an
+/// agent (a friend's event carries nothing about their pick, and cannot be told from any other
+/// friend's), and our own presence doesn't change either, so agent select would sit
 /// still for its whole ~100 s after the entry events. Polling the local pregame endpoint once
 /// a second keeps the roster live (vRY's main loop polls for the same reason). Every other
 /// status stays purely event-driven — `None` means "wait indefinitely". Pure.
@@ -235,23 +242,32 @@ fn enrichment_is_final(complete: bool, failed_attempts: u32) -> bool {
     complete || failed_attempts >= MAX_PHASE2_ATTEMPTS
 }
 
-/// Drain the poke channel, returning the strongest poke that was waiting (`None` if empty).
-fn drain_pokes(rx: &mut mpsc::Receiver<Poke>) -> Option<Poke> {
-    let mut strongest = None;
-    while let Ok(poke) = rx.try_recv() {
-        strongest = Some(collapse(strongest, poke));
+/// Drain the poke channel, reporting whether any poke was waiting — a burst of own-presence
+/// events collapses into the one rebuild that follows. Mid-burst this is also the abort check:
+/// a new own-presence event (possibly a dodge / state transition) means the loop should rebuild
+/// for the current state rather than block behind the remaining ~500 KB match-details fetches
+/// (HIGH-2).
+fn drain_pokes(rx: &mut mpsc::Receiver<Poke>) -> bool {
+    let mut any = false;
+    while rx.try_recv().is_ok() {
+        any = true;
     }
-    strongest
+    any
 }
 
-/// Drain the poke channel mid-burst and report whether the enrichment should abort: a new
-/// presence event (possibly a dodge / state transition) means the loop should rebuild for the
-/// current state rather than block it behind the remaining ~500 KB match-details fetches
-/// (HIGH-2). In-match, only our own presence qualifies — another player's is dropped here so
-/// the ingame path never gains a rebuild from it.
-fn abort_pending(rx: &mut mpsc::Receiver<Poke>, ingame: bool) -> bool {
-    let status = if ingame { AppStatus::Ingame } else { AppStatus::Pregame };
-    drain_pokes(rx).is_some_and(|poke| poke_triggers_rebuild(poke, status))
+/// Await `fut`, cutting it short as soon as a poke arrives; `None` then means "abandon this
+/// attempt and rebuild for the current state". This is what keeps a transition from waiting out
+/// an in-flight request (up to the 15 s HTTP timeout) or a 429 backoff.
+async fn until_poke<F: Future>(rx: &mut mpsc::Receiver<Poke>, fut: F) -> Option<F::Output> {
+    tokio::pin!(fut);
+    tokio::select! {
+        out = &mut fut => Some(out),
+        poke = rx.recv() => match poke {
+            Some(_) => None,
+            // Websocket task gone — nothing can interrupt any more, so see it through.
+            None => Some(fut.as_mut().await),
+        },
+    }
 }
 
 /// Everything needed once connected to a running client.
@@ -275,6 +291,11 @@ struct Session {
     /// newest competitive match id — so a returning player's ~500 KB match-details are not
     /// re-downloaded while their newest match is unchanged (phase 2 constraint).
     recent_stats_cache: RecentStatsCache,
+    /// Parsed match-details keyed by match id, so a match several lobby players share is
+    /// downloaded once and a retry pass refetches only the ids that failed.
+    match_details: MatchDetailsCache,
+    /// The backoff a 429 imposed, honored by every remote call for the rest of the session.
+    rate_limit: RateLimitGate,
 }
 
 /// Per-match cache of the expensive per-player lookups. Keyed by match id AND whether the
@@ -301,6 +322,18 @@ struct MatchCache {
     recent_stats: HashMap<String, RecentStats>,
     /// puuid -> equipped Vandal/Phantom skin uuids (phase 2, INGAME only).
     skins: HashMap<String, PlayerSkinIds>,
+    /// The coregame match payload's roster, kept for INGAME only (see `cached_roster`).
+    roster: Option<CachedRoster>,
+}
+
+/// What a snapshot needs out of the match payload. Once a match is running the roster, the
+/// agents and the map are fixed for the rest of it, so an own-presence event can render from
+/// this instead of re-downloading the coregame match. Agent select changes all three, so it is
+/// never cached there.
+struct CachedRoster {
+    players: Vec<MatchPlayer>,
+    own_team: Option<String>,
+    map_id: Option<String>,
 }
 
 impl MatchCache {
@@ -319,6 +352,17 @@ impl MatchCache {
             && !(ingame && !self.ingame)
     }
 
+    /// The roster to render `match_id` from without fetching the match payload at all: only
+    /// INGAME, and only for the fully enriched cache of that exact match. The cheap match-id
+    /// GET stays the change detector, so a match that ended (or a new one) still lands on the
+    /// full path.
+    fn cached_roster(&self, match_id: &str, ingame: bool) -> Option<&CachedRoster> {
+        if !ingame || !self.is_fresh_for(match_id, true) {
+            return None;
+        }
+        self.roster.as_ref()
+    }
+
     /// Prepare the cache to (re)build `match_id` at `ingame`. Same-match data is KEPT so a
     /// pregame→ingame upgrade — or a phase-1 cache being enriched, or a burst resumed after
     /// an abort — reuses the already-fetched per-puuid rows and fetches only what's missing
@@ -332,6 +376,7 @@ impl MatchCache {
             self.updates.clear();
             self.recent_stats.clear();
             self.skins.clear();
+            self.roster = None;
         }
         // A different match — or a pregame→ingame upgrade, which brings a new half-roster and
         // the loadouts along with it — restores the phase-2 retry budget.
@@ -349,6 +394,10 @@ impl MatchCache {
     }
 }
 
+/// How many players the session keeps stats for. Ten per lobby, so this covers a long evening
+/// of matches plus their repeat players; past that the least recently added player goes.
+const RECENT_STATS_CACHE_CAP: usize = 128;
+
 /// Session-lived match-details stat cache: puuid -> (newest competitive match id the stats
 /// were computed from, the HS% + KD they yielded). Both figures come from the same payloads,
 /// so they share one entry. Persists across matches (NOT cleared on MENUS) so it
@@ -356,6 +405,8 @@ impl MatchCache {
 #[derive(Default)]
 struct RecentStatsCache {
     map: HashMap<String, (String, RecentStats)>,
+    /// Insertion order, so the cap evicts the player held longest.
+    order: VecDeque<String>,
 }
 
 impl RecentStatsCache {
@@ -368,7 +419,87 @@ impl RecentStatsCache {
     }
 
     fn put(&mut self, puuid: &str, newest_match_id: &str, stats: RecentStats) {
-        self.map.insert(puuid.to_string(), (newest_match_id.to_string(), stats));
+        if self
+            .map
+            .insert(puuid.to_string(), (newest_match_id.to_string(), stats))
+            .is_some()
+        {
+            return; // already queued for eviction under this puuid
+        }
+        self.order.push_back(puuid.to_string());
+        while self.order.len() > RECENT_STATS_CACHE_CAP {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+    }
+}
+
+/// How one match id of a player's HS%/KD window is served, before any request is considered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowStep {
+    /// Already parsed — this is what it contributes to the player.
+    Cached(MatchTotals),
+    /// It already failed earlier in this pass, for this player or another one. Lobby players
+    /// share recent matches, so retrying it per player would multiply one dead id across the
+    /// whole lobby; the window is simply left incomplete, which is what keeps the pass
+    /// non-final so a later pass can try the id again.
+    Failed,
+    /// Not seen yet — download it.
+    Fetch,
+}
+
+/// Decide how to serve `match_id` for `puuid` this pass, from the session cache and the ids
+/// that have already failed in it. Pure.
+fn window_step(
+    cache: &MatchDetailsCache,
+    failed: &HashSet<String>,
+    match_id: &str,
+    puuid: &str,
+) -> WindowStep {
+    match cache.totals_for(match_id, puuid) {
+        Some(totals) => WindowStep::Cached(totals),
+        None if failed.contains(match_id) => WindowStep::Failed,
+        None => WindowStep::Fetch,
+    }
+}
+
+/// How many parsed matches the session keeps. One full lobby's HS%/KD window spans at most
+/// `10 * RECENT_MATCHES_FOR_HS` matches, so this covers a lobby plus its overlap with the next
+/// one; past that the oldest entry goes.
+const MATCH_DETAILS_CACHE_CAP: usize = 64;
+
+/// Session-lived cache of parsed match-details, keyed by match id. Lobby players share recent
+/// matches, so keying the download by match instead of by player collapses the duplicates —
+/// and a pass that failed halfway refetches only the ids it missed. Only the handful of
+/// per-player numbers HS%/KD need are kept; the ~500 KB payload is dropped as soon as it is
+/// parsed.
+#[derive(Default)]
+struct MatchDetailsCache {
+    map: HashMap<String, MatchContribution>,
+    /// Insertion order, so the cap evicts the oldest match.
+    order: VecDeque<String>,
+}
+
+impl MatchDetailsCache {
+    /// What `match_id` contributes to `puuid`'s window, or `None` when the match is not held.
+    /// A cached match that the player never appeared in contributes nothing, which is a hit.
+    fn totals_for(&self, match_id: &str, puuid: &str) -> Option<MatchTotals> {
+        self.map
+            .get(match_id)
+            .map(|c| c.get(puuid).copied().unwrap_or_default())
+    }
+
+    fn put(&mut self, match_id: &str, contribution: MatchContribution) {
+        if self.map.insert(match_id.to_string(), contribution).is_some() {
+            return;
+        }
+        self.order.push_back(match_id.to_string());
+        while self.order.len() > MATCH_DETAILS_CACHE_CAP {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
     }
 }
 
@@ -456,6 +587,8 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
         seasons,
         cache: MatchCache::default(),
         recent_stats_cache: RecentStatsCache::default(),
+        match_details: MatchDetailsCache::default(),
+        rate_limit: RateLimitGate::default(),
     })
 }
 
@@ -524,10 +657,9 @@ async fn top_up_static_data(session: &mut Session, presence_version: &str) {
 /// Run a connected session: emit initial state, then react to websocket presence events
 /// until the client is gone (websocket task drops tx, ending the loop).
 async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: &Arc<dyn Emitter>) {
-    // Poke channel: the websocket sends a `Poke` per Valorant presence event (own vs another
-    // player's), and an `Own` poke after every reconnect so we re-poll presence for any
-    // transition missed while the socket was down (C2). The task ends (dropping tx) only when
-    // the client is gone.
+    // Poke channel: the websocket sends a `Poke` per OWN Valorant presence event, and one after
+    // every reconnect so we re-poll presence for any transition missed while the socket was
+    // down (C2). The task ends (dropping tx) only when the client is gone.
     let (tx, mut rx) = mpsc::channel::<Poke>(32);
     let ws_lockfile = session.lockfile.clone();
     let own = session.own_puuid.clone();
@@ -558,8 +690,7 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
                 break;
             }
             // Re-poll after the drop so any transition during the outage is picked up (C2).
-            // Always an `Own` poke: it must rebuild whatever state we are in.
-            if tx.send(Poke::Own).await.is_err() {
+            if tx.send(Poke).await.is_err() {
                 break; // receiver gone
             }
             tokio::time::sleep(Duration::from_secs(backoff)).await;
@@ -594,7 +725,7 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
         // with a full retry budget.
         retry_attempt = 0;
         if outcome == BuildOutcome::Interrupted {
-            drain_pokes(&mut rx);
+            let _ = drain_pokes(&mut rx);
             continue;
         }
         if !wait_for_rebuild_poke(&mut rx, state).await {
@@ -605,31 +736,21 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
     ws_task.abort();
 }
 
-/// Wait for a poke that warrants a rebuild for the currently published status, collapsing
-/// each burst into one (L1). Pokes that don't warrant one (another player's presence outside
-/// agent select) are dropped without any refetch. Returns false when the websocket task ended.
+/// Wait for the next poke, collapsing a burst into one rebuild (L1). Returns false when the
+/// websocket task ended.
 ///
 /// In Pregame the wait is bounded by `poll_interval`, so an elapsed timeout triggers a rebuild
 /// just like a poke would — that tick is what makes teammates' agent picks visible, since Riot
 /// pushes no presence event for them. Identical rebuilds are suppressed by the snapshot dedup
 /// in `publish`, and a tick can't stack with pokes: the rebuild drains the channel anyway.
 async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerState) -> bool {
-    loop {
-        let first = match poll_interval(state.status()) {
-            Some(tick) => match tokio::time::timeout(tick, rx.recv()).await {
-                Ok(Some(poke)) => poke,
-                Ok(None) => return false, // websocket task ended -> client gone
-                Err(_) => return true,    // poll tick -> rebuild agent select
-            },
-            None => match rx.recv().await {
-                Some(poke) => poke,
-                None => return false,
-            },
-        };
-        let poke = collapse(drain_pokes(rx), first);
-        if poke_triggers_rebuild(poke, state.status()) {
-            return true;
-        }
+    match poll_interval(state.status()) {
+        Some(tick) => match tokio::time::timeout(tick, rx.recv()).await {
+            Ok(Some(_)) => true,
+            Ok(None) => false, // websocket task ended -> client gone
+            Err(_) => true,    // poll tick -> rebuild agent select
+        },
+        None => rx.recv().await.is_some(),
     }
 }
 
@@ -719,14 +840,13 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
         top_up_static_data(session, v).await;
     }
 
-    let parties = presence::party_grouping(&presences);
-
     match info.session_state {
-        Some(SessionLoopState::Pregame) => {
-            build_match_snapshot(session, &info, &parties, false, ctx).await
-        }
-        Some(SessionLoopState::Ingame) => {
-            build_match_snapshot(session, &info, &parties, true, ctx).await
+        // Party grouping decodes every online friend's presence blob, and only a match table
+        // renders it, so it is built here rather than for every Menus rebuild.
+        Some(state @ (SessionLoopState::Pregame | SessionLoopState::Ingame)) => {
+            let parties = presence::party_grouping(&presences);
+            let ingame = state == SessionLoopState::Ingame;
+            build_match_snapshot(session, &info, &parties, ingame, ctx).await
         }
         // MENUS or unknown -> menus snapshot. A new match always starts from menus, so this
         // is where the per-match cache is invalidated (L1 + pitfall §12).
@@ -770,32 +890,29 @@ async fn build_match_snapshot(
     // coregame, immediately for pregame (spec §10.5, C9). The 429 retry sits INSIDE the
     // 404-race retry so a rate limit is backed off once per attempt rather than being
     // multiplied by it.
-    let id_json = if ingame {
-        fetch_with_retry(Duration::from_secs(5), || {
-            with_rate_limit_retry(|| session.remote.coregame_match_id(&own))
-        })
-        .await?
+    let id_fetch = if ingame {
+        until_poke(
+            ctx.rx,
+            fetch_with_retry(Duration::from_secs(5), || {
+                with_rate_limit_retry(&session.rate_limit, || {
+                    session.remote.coregame_match_id(&own)
+                })
+            }),
+        )
+        .await
     } else {
-        fetch_with_retry(Duration::ZERO, || {
-            with_rate_limit_retry(|| session.remote.pregame_match_id(&own))
-        })
-        .await?
+        until_poke(
+            ctx.rx,
+            fetch_with_retry(Duration::ZERO, || {
+                with_rate_limit_retry(&session.rate_limit, || session.remote.pregame_match_id(&own))
+            }),
+        )
+        .await
     };
-    let match_id = match_state::extract_match_id(&id_json).ok_or(Error::ResourceNotFound)?;
-
-    // Match data (owned Values consumed by the extractors — no deep clone, L4).
-    let (players, own_team, map_id): (Vec<MatchPlayer>, Option<String>, Option<String>) = if ingame
-    {
-        let m = with_rate_limit_retry(|| session.remote.coregame_match(&match_id)).await?;
-        // A payload we can't read is an error, not an empty lobby: erroring here happens
-        // BEFORE `begin_match`, so nothing is cached and the loop retries.
-        let data = match_state::extract_coregame(m, &own)?;
-        (data.players, data.own_team, data.map_id)
-    } else {
-        let m = with_rate_limit_retry(|| session.remote.pregame_match(&match_id)).await?;
-        let data = match_state::extract_pregame(m, &own)?;
-        (data.players, data.own_team, data.map_id)
+    let Some(id_json) = id_fetch else {
+        return Ok(BuildOutcome::Interrupted);
     };
+    let match_id = match_state::extract_match_id(&id_json?).ok_or(Error::ResourceNotFound)?;
 
     let status = if ingame { AppStatus::Ingame } else { AppStatus::Pregame };
     let mode = if info.is_custom_game() {
@@ -803,6 +920,50 @@ async fn build_match_snapshot(
     } else {
         info.queue_id.as_deref().map(game_mode_name)
     };
+
+    // The in-match steady state: the id above already confirmed we are still in the same
+    // match, and everything the match payload would carry is fixed for its duration, so this
+    // path renders an own-presence event (the score rides the presence data) with one GET.
+    if let Some(roster) = session.cache.cached_roster(&match_id, ingame) {
+        let map = session.static_data.map(roster.map_id.as_deref());
+        let snap = assemble_snapshot(
+            session,
+            &roster.players,
+            parties,
+            roster.own_team.clone(),
+            map,
+            mode,
+            status,
+            true,
+        );
+        publish(ctx.state, ctx.emitter, snap);
+        return Ok(BuildOutcome::Done);
+    }
+
+    // Match data (owned Values consumed by the extractors — no deep clone, L4).
+    let match_fetch = if ingame {
+        let call = || session.remote.coregame_match(&match_id);
+        let fetch = with_rate_limit_retry(&session.rate_limit, call);
+        until_poke(ctx.rx, fetch).await
+    } else {
+        let call = || session.remote.pregame_match(&match_id);
+        let fetch = with_rate_limit_retry(&session.rate_limit, call);
+        until_poke(ctx.rx, fetch).await
+    };
+    let Some(match_json) = match_fetch else {
+        return Ok(BuildOutcome::Interrupted);
+    };
+    let (players, own_team, map_id): (Vec<MatchPlayer>, Option<String>, Option<String>) = if ingame
+    {
+        // A payload we can't read is an error, not an empty lobby: erroring here happens
+        // BEFORE `begin_match`, so nothing is cached and the loop retries.
+        let data = match_state::extract_coregame(match_json?, &own)?;
+        (data.players, data.own_team, data.map_id)
+    } else {
+        let data = match_state::extract_pregame(match_json?, &own)?;
+        (data.players, data.own_team, data.map_id)
+    };
+
     let map = session.static_data.map(map_id.as_deref());
 
     // Fully cached (enriched, correct state) -> a single snapshot, no fetch. This is the
@@ -818,12 +979,23 @@ async fn build_match_snapshot(
     // BadClaims can't strand us mid-burst and force a redo (MEDIUM-2). Best-effort: if the
     // refresh fails we proceed with the current token and the BadClaims arm still covers it.
     session.cache.begin_match(&match_id, ingame);
+    if ingame {
+        session.cache.roster = Some(CachedRoster {
+            players: players.clone(),
+            own_team: own_team.clone(),
+            map_id,
+        });
+    }
     let _ = refresh_tokens(session).await;
 
     let puuids: Vec<String> = players.iter().map(|p| p.puuid.clone()).collect();
 
     // === Phase 1: names + MMR (fast fields). Publish immediately. ===
-    fetch_phase1(&session.remote, &mut session.cache, &puuids).await?;
+    let gate = &session.rate_limit;
+    if !fetch_phase1(&session.remote, gate, &mut session.cache, &puuids, ctx.rx).await? {
+        // Phase-1 data stays cached (enriched == false), so the rebuild fetches only the rest.
+        return Ok(BuildOutcome::Interrupted);
+    }
     let snap1 = assemble_snapshot(
         session,
         &players,
@@ -839,8 +1011,10 @@ async fn build_match_snapshot(
     // === Phase 2: competitiveupdates + HS%/KD + loadout skins. Interruptible. ===
     let outcome = fetch_phase2(
         &session.remote,
+        &session.rate_limit,
         &mut session.cache,
         &mut session.recent_stats_cache,
+        &mut session.match_details,
         &puuids,
         ingame,
         &match_id,
@@ -939,22 +1113,72 @@ const RATE_LIMIT_BACKOFF_SECS: u64 = 6;
 fn rate_limit_backoff(retry_after_secs: Option<u64>) -> Duration {
     Duration::from_secs(retry_after_secs.unwrap_or(RATE_LIMIT_BACKOFF_SECS))
 }
+
+/// The deadline a 429 imposed on the whole session. Riot rate-limits the client, not one
+/// endpoint, so pd and glz share it. It lives beside the requests rather than inside them
+/// because a request can be abandoned mid-backoff (a transition rebuilds at once): the sleep
+/// goes with the cancelled future, the deadline does not, so the next attempt still waits out
+/// what the server asked for instead of resending inside its window.
+#[derive(Default)]
+struct RateLimitGate {
+    until: Mutex<Option<Instant>>,
+}
+
+impl RateLimitGate {
+    /// How much of the deadline is left (`None` = free to send). Reaching it clears it.
+    fn wait(&self) -> Option<Duration> {
+        let mut until = self.until.lock().unwrap();
+        let deadline = (*until)?;
+        let remaining = deadline.checked_duration_since(Instant::now());
+        if remaining.is_none() {
+            *until = None;
+        }
+        remaining
+    }
+
+    /// Hold every request off for `backoff`. A deadline already further out wins — the
+    /// stricter of two limits is the one to honor.
+    fn arm(&self, backoff: Duration) {
+        let deadline = Instant::now() + backoff;
+        let mut until = self.until.lock().unwrap();
+        match *until {
+            Some(held) if held >= deadline => {}
+            _ => *until = Some(deadline),
+        }
+    }
+}
+
 /// Run a remote fetch with one backed-off retry on a 429 (spec §10.6, C5) rather than
 /// silently degrading. BadClaims and other errors pass straight through to the caller; so does
 /// a 429 the retry could not clear, which `warrants_token_refresh` then routes into the token
 /// refresh, since headers we keep sending are part of what the limiter counts.
 /// Every pd AND glz call goes through here, including the match-id/match fetches the
 /// 1 s agent-select poll drives: the wait happens INSIDE the build, so a rate-limited poll
-/// tick stretches rather than stacking another attempt on top.
-async fn with_rate_limit_retry<F, Fut>(f: F) -> Result<serde_json::Value>
+/// tick stretches rather than stacking another attempt on top. A backoff still owed from an
+/// earlier 429 — this call's or an abandoned one's — is waited out before anything is sent.
+async fn with_rate_limit_retry<F, Fut>(gate: &RateLimitGate, f: F) -> Result<serde_json::Value>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
+    if let Some(owed) = gate.wait() {
+        tokio::time::sleep(owed).await;
+    }
     match f().await {
         Err(Error::RateLimited(retry_after)) => {
-            tokio::time::sleep(rate_limit_backoff(retry_after)).await;
-            f().await
+            gate.arm(rate_limit_backoff(retry_after));
+            if let Some(owed) = gate.wait() {
+                tokio::time::sleep(owed).await;
+            }
+            match f().await {
+                // The retry's own Retry-After still binds later requests, even though no
+                // third attempt is made here.
+                Err(Error::RateLimited(retry_after)) => {
+                    gate.arm(rate_limit_backoff(retry_after));
+                    Err(Error::RateLimited(retry_after))
+                }
+                other => other,
+            }
         }
         other => other,
     }
@@ -964,8 +1188,12 @@ where
 /// tokens and retries once (C4) — an unspent rate limit included, since it is lobby-wide and
 /// would otherwise settle the whole table on placeholder names. Other transport errors degrade
 /// to an empty map (names render as placeholders rather than failing the whole table).
-async fn fetch_names(remote: &RemoteClient, puuids: &[String]) -> Result<HashMap<String, String>> {
-    match with_rate_limit_retry(|| remote.names(puuids)).await {
+async fn fetch_names(
+    remote: &RemoteClient,
+    gate: &RateLimitGate,
+    puuids: &[String],
+) -> Result<HashMap<String, String>> {
+    match with_rate_limit_retry(gate, || remote.names(puuids)).await {
         Ok(v) => match names::parse_name_response(&v) {
             Ok(map) => Ok(map),
             Err(e) if warrants_token_refresh(&e) => Err(e),
@@ -991,12 +1219,15 @@ fn inter_request_delay() -> Duration {
 /// Unranked because of one would be wrong. The inter-request delay is applied only
 /// BETWEEN requests (LOW: no trailing
 /// sleep), and now covers the MMR fetches too (LOW: consistency with the spec's per-player
-/// 120 ms).
+/// 120 ms). Returns false when a poke arrived while a request was in flight — whatever was
+/// fetched stays cached, so the rebuild resumes rather than redoing it.
 async fn fetch_phase1(
     remote: &RemoteClient,
+    gate: &RateLimitGate,
     cache: &mut MatchCache,
     puuids: &[String],
-) -> Result<()> {
+    rx: &mut mpsc::Receiver<Poke>,
+) -> Result<bool> {
     // Names: one batch call for the puuids we don't already hold.
     let missing_names: Vec<String> = puuids
         .iter()
@@ -1004,8 +1235,10 @@ async fn fetch_phase1(
         .cloned()
         .collect();
     if !missing_names.is_empty() {
-        let fetched = fetch_names(remote, &missing_names).await?;
-        cache.names.extend(fetched);
+        let Some(fetched) = until_poke(rx, fetch_names(remote, gate, &missing_names)).await else {
+            return Ok(false);
+        };
+        cache.names.extend(fetched?);
     }
 
     // MMR: per player, only the ones missing, spaced between requests.
@@ -1018,7 +1251,11 @@ async fn fetch_phase1(
         if i > 0 {
             tokio::time::sleep(inter_request_delay()).await;
         }
-        match with_rate_limit_retry(|| remote.mmr(puuid)).await {
+        let Some(result) = until_poke(rx, with_rate_limit_retry(gate, || remote.mmr(puuid))).await
+        else {
+            return Ok(false);
+        };
+        match result {
             Ok(v) => {
                 cache.mmr.insert(puuid.clone(), parse_mmr(v));
             }
@@ -1026,7 +1263,7 @@ async fn fetch_phase1(
             Err(_) => { /* private profile / hiccup -> Unranked for this row only */ }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Phase 2 of the two-phase emit: competitiveupdates (ΔRR + last-5 + recent match ids),
@@ -1041,10 +1278,13 @@ async fn fetch_phase1(
 /// keeps the cache un-final and retries that player only — never publishing a transient gap
 /// as a settled `enriched` null. The inter-request delay spaces requests only
 /// BETWEEN them (LOW: no trailing sleep, none after a skip/cache-hit).
+#[allow(clippy::too_many_arguments)] // one caller; the parameters are the phase's inputs.
 async fn fetch_phase2(
     remote: &RemoteClient,
+    gate: &RateLimitGate,
     cache: &mut MatchCache,
     recent_stats_cache: &mut RecentStatsCache,
+    match_details: &mut MatchDetailsCache,
     puuids: &[String],
     ingame: bool,
     match_id: &str,
@@ -1055,6 +1295,9 @@ async fn fetch_phase2(
     let mut sent_any = false;
     // Set by any transient failure — the whole pass is then not final.
     let mut partial = false;
+    // Match ids that failed this pass. Lobby players share recent matches, so without this a
+    // single dead id would be retried once per player, every pass.
+    let mut failed_matches: HashSet<String> = HashSet::new();
 
     // competitiveupdates: one request per player missing history.
     let missing_updates: Vec<String> = puuids
@@ -1063,14 +1306,19 @@ async fn fetch_phase2(
         .cloned()
         .collect();
     for puuid in &missing_updates {
-        if abort_pending(rx, ingame) {
+        if drain_pokes(rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
         if sent_any {
             tokio::time::sleep(inter_request_delay()).await;
         }
         sent_any = true;
-        match with_rate_limit_retry(|| remote.competitive_updates(puuid)).await {
+        let Some(result) =
+            until_poke(rx, with_rate_limit_retry(gate, || remote.competitive_updates(puuid))).await
+        else {
+            return Ok(Phase2Outcome::Interrupted);
+        };
+        match result {
             Ok(v) => {
                 cache.updates.insert(puuid.clone(), stats::parse_competitive_updates(v));
             }
@@ -1086,7 +1334,7 @@ async fn fetch_phase2(
         if cache.recent_stats.contains_key(puuid) {
             continue;
         }
-        if abort_pending(rx, ingame) {
+        if drain_pokes(rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
         // No history entry at all means the competitiveupdates call above failed — a
@@ -1115,23 +1363,47 @@ async fn fetch_phase2(
         let mut acc = MatchTotals::default();
         let mut any_failed = false;
         for mid in &match_ids {
-            if abort_pending(rx, ingame) {
+            match window_step(match_details, &failed_matches, mid, puuid) {
+                WindowStep::Cached(totals) => {
+                    acc.add(totals);
+                    continue;
+                }
+                WindowStep::Failed => {
+                    any_failed = true;
+                    continue;
+                }
+                WindowStep::Fetch => {}
+            }
+            if drain_pokes(rx) {
                 return Ok(Phase2Outcome::Interrupted);
             }
             if sent_any {
                 tokio::time::sleep(inter_request_delay()).await;
             }
             sent_any = true;
-            match with_rate_limit_retry(|| remote.match_details(mid)).await {
-                Ok(v) => stats::accumulate_match_totals(&mut acc, &v, puuid),
+            let Some(result) =
+                until_poke(rx, with_rate_limit_retry(gate, || remote.match_details(mid))).await
+            else {
+                return Ok(Phase2Outcome::Interrupted);
+            };
+            match result {
+                Ok(v) => {
+                    let contribution = stats::match_contribution(&v);
+                    acc.add(contribution.get(puuid).copied().unwrap_or_default());
+                    match_details.put(mid, contribution);
+                }
                 Err(Error::BadClaims) => return Err(Error::BadClaims),
-                Err(_) => any_failed = true,
+                Err(_) => {
+                    any_failed = true;
+                    failed_matches.insert(mid.clone());
+                }
             }
         }
         if any_failed {
-            // A window missing some of its matches yields the WRONG HS%/KD. Cache neither
-            // per-match nor per-session (the session entry would otherwise stay wrong until
-            // the player's next competitive match) and retry the whole window.
+            // A window missing some of its matches yields the WRONG HS%/KD, so neither figure
+            // is cached for this player (the session entry would otherwise stay wrong until
+            // their next competitive match). The matches that DID arrive stay in
+            // `match_details`, so the retry only refetches the ones that failed.
             partial = true;
             continue;
         }
@@ -1142,10 +1414,15 @@ async fn fetch_phase2(
 
     // Loadout skins: one request per match, INGAME only.
     if ingame && cache.skins.is_empty() {
-        if abort_pending(rx, ingame) {
+        if drain_pokes(rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
-        match with_rate_limit_retry(|| remote.coregame_loadouts(match_id)).await {
+        let Some(result) =
+            until_poke(rx, with_rate_limit_retry(gate, || remote.coregame_loadouts(match_id))).await
+        else {
+            return Ok(Phase2Outcome::Interrupted);
+        };
+        match result {
             Ok(v) => {
                 cache.skins = loadout::parse_loadouts(&v);
             }
@@ -1166,37 +1443,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn burst_collapses_to_the_strongest_poke() {
-        // Own outranks Other in any order, so a mixed burst rebuilds as one own poke.
-        assert_eq!(collapse(None, Poke::Other), Poke::Other);
-        assert_eq!(collapse(None, Poke::Own), Poke::Own);
-        assert_eq!(collapse(Some(Poke::Other), Poke::Own), Poke::Own);
-        assert_eq!(collapse(Some(Poke::Own), Poke::Other), Poke::Own);
-        assert_eq!(collapse(Some(Poke::Other), Poke::Other), Poke::Other);
-    }
-
-    #[test]
-    fn own_pokes_rebuild_in_every_state() {
-        for status in [
-            AppStatus::ValorantNotRunning,
-            AppStatus::Menus,
-            AppStatus::Pregame,
-            AppStatus::Ingame,
-        ] {
-            assert!(poke_triggers_rebuild(Poke::Own, status));
-        }
-    }
-
-    #[test]
-    fn other_pokes_rebuild_only_in_pregame() {
-        // Agent select is the only state where another player's presence changes our table.
-        assert!(poke_triggers_rebuild(Poke::Other, AppStatus::Pregame));
-        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Ingame));
-        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Menus));
-        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::ValorantNotRunning));
-    }
-
-    #[test]
     fn only_pregame_polls_on_a_timer() {
         // Agent select gets a bounded wait (no presence events for non-friends' picks); every
         // other state stays purely event-driven.
@@ -1210,26 +1456,15 @@ mod tests {
     }
 
     #[test]
-    fn drain_collapses_and_empties_the_channel() {
+    fn drain_collapses_a_burst_and_empties_the_channel() {
         let (tx, mut rx) = mpsc::channel::<Poke>(8);
-        assert_eq!(drain_pokes(&mut rx), None);
-        tx.try_send(Poke::Other).unwrap();
-        tx.try_send(Poke::Own).unwrap();
-        tx.try_send(Poke::Other).unwrap();
-        assert_eq!(drain_pokes(&mut rx), Some(Poke::Own));
-        assert_eq!(drain_pokes(&mut rx), None);
-    }
-
-    #[test]
-    fn enrichment_aborts_on_other_pokes_only_in_pregame() {
-        let (tx, mut rx) = mpsc::channel::<Poke>(8);
-        tx.try_send(Poke::Other).unwrap();
-        assert!(!abort_pending(&mut rx, true), "ingame must ignore other players' pokes");
-        tx.try_send(Poke::Other).unwrap();
-        assert!(abort_pending(&mut rx, false), "pregame rebuilds on an agent lock");
-        tx.try_send(Poke::Other).unwrap();
-        tx.try_send(Poke::Own).unwrap();
-        assert!(abort_pending(&mut rx, true), "own poke still aborts ingame");
+        assert!(!drain_pokes(&mut rx));
+        tx.try_send(Poke).unwrap();
+        tx.try_send(Poke).unwrap();
+        // The whole burst becomes the one rebuild that follows...
+        assert!(drain_pokes(&mut rx));
+        // ...and nothing is left to re-trigger it.
+        assert!(!drain_pokes(&mut rx));
     }
 
     #[test]
@@ -1294,7 +1529,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Poke>(8);
         assert!(wait_before_retry(&mut rx, Duration::from_millis(1)).await);
         // A poke cuts the backoff short.
-        tx.try_send(Poke::Other).unwrap();
+        tx.try_send(Poke).unwrap();
         assert!(wait_before_retry(&mut rx, Duration::from_secs(30)).await);
         // Websocket task gone -> end the session so the top level re-reads the lockfile.
         drop(tx);
@@ -1435,6 +1670,150 @@ mod tests {
         assert_eq!(c.match_id, None);
     }
 
+    /// A roster row, enough for the ingame skip tests.
+    fn roster_of(puuid: &str) -> CachedRoster {
+        CachedRoster {
+            players: vec![MatchPlayer {
+                puuid: puuid.into(),
+                team: "Blue".into(),
+                character_id: None,
+                selection_state: None,
+                account_level: 0,
+                incognito: false,
+                hide_account_level: false,
+            }],
+            own_team: Some("Blue".into()),
+            map_id: Some("/Game/Maps/Ascent/Ascent".into()),
+        }
+    }
+
+    #[test]
+    fn the_match_payload_is_skipped_only_for_an_enriched_ingame_match() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", true);
+        c.roster = Some(roster_of("p"));
+        // Phase 2 hasn't settled yet -> the payload is still needed.
+        assert!(c.cached_roster("m", true).is_none());
+        c.enriched = true;
+        assert!(c.cached_roster("m", true).is_some());
+        // A different match id is exactly what the cheap match-id GET is there to catch.
+        assert!(c.cached_roster("other", true).is_none());
+        // Agent select changes the roster and the picks, so it always refetches.
+        assert!(c.cached_roster("m", false).is_none());
+    }
+
+    #[test]
+    fn a_new_match_drops_the_cached_roster() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", true);
+        c.roster = Some(roster_of("p"));
+        c.enriched = true;
+        c.begin_match("other", true);
+        assert!(c.roster.is_none());
+        assert!(c.cached_roster("other", true).is_none());
+    }
+
+    #[test]
+    fn a_cached_match_serves_every_player_that_played_it() {
+        let mut cache = MatchDetailsCache::default();
+        assert_eq!(cache.totals_for("m1", "a"), None);
+
+        let played =
+            |kills, deaths| MatchTotals { kills, deaths, kd_matches: 1, ..Default::default() };
+        let mut contribution = MatchContribution::new();
+        contribution.insert("a".into(), played(20, 15));
+        contribution.insert("b".into(), played(9, 18));
+        cache.put("m1", contribution);
+
+        // Both lobby members read the one download...
+        assert_eq!(cache.totals_for("m1", "a").unwrap().kills, 20);
+        assert_eq!(cache.totals_for("m1", "b").unwrap().kills, 9);
+        // ...and a player who wasn't in it contributes nothing, which is still a hit.
+        assert_eq!(cache.totals_for("m1", "c"), Some(MatchTotals::default()));
+    }
+
+    #[test]
+    fn the_match_cache_evicts_the_oldest_past_its_cap() {
+        let mut cache = MatchDetailsCache::default();
+        for i in 0..MATCH_DETAILS_CACHE_CAP + 2 {
+            cache.put(&format!("m{i}"), MatchContribution::new());
+        }
+        assert_eq!(cache.map.len(), MATCH_DETAILS_CACHE_CAP);
+        assert_eq!(cache.order.len(), MATCH_DETAILS_CACHE_CAP);
+        assert_eq!(cache.totals_for("m0", "p"), None);
+        assert_eq!(cache.totals_for("m1", "p"), None);
+        assert!(cache.totals_for("m2", "p").is_some());
+        assert!(cache.totals_for(&format!("m{}", MATCH_DETAILS_CACHE_CAP + 1), "p").is_some());
+
+        // Re-putting a held match must not queue a second eviction slot for it.
+        cache.put("m2", MatchContribution::new());
+        assert_eq!(cache.order.len(), MATCH_DETAILS_CACHE_CAP);
+    }
+
+    #[test]
+    fn a_match_that_failed_this_pass_is_not_refetched_for_the_next_player() {
+        let mut cache = MatchDetailsCache::default();
+        let mut failed = HashSet::new();
+
+        // Untouched so far -> download it.
+        assert_eq!(window_step(&cache, &failed, "m1", "a"), WindowStep::Fetch);
+
+        // It failed for the first player, so every other player who played it takes the
+        // no-data path instead of spending a request of their own on the same dead id.
+        failed.insert("m1".to_string());
+        assert_eq!(window_step(&cache, &failed, "m1", "b"), WindowStep::Failed);
+        // A different id in the same pass is unaffected.
+        assert_eq!(window_step(&cache, &failed, "m2", "b"), WindowStep::Fetch);
+
+        // A cached match always wins: a later pass that succeeds serves everyone.
+        cache.put("m1", MatchContribution::new());
+        assert_eq!(
+            window_step(&cache, &failed, "m1", "b"),
+            WindowStep::Cached(MatchTotals::default())
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_deadline_outlives_the_request_that_earned_it() {
+        let gate = RateLimitGate::default();
+        // Nothing owed by default.
+        assert_eq!(gate.wait(), None);
+
+        // A 429's backoff holds off every later request, not just the retry that was cancelled.
+        gate.arm(Duration::from_secs(30));
+        let owed = gate.wait().expect("deadline still ahead");
+        assert!(owed > Duration::from_secs(29) && owed <= Duration::from_secs(30));
+
+        // A shorter backoff can't shorten what the server already asked for...
+        gate.arm(Duration::from_secs(1));
+        assert!(gate.wait().expect("longer deadline kept") > Duration::from_secs(29));
+        // ...but a stricter one wins.
+        gate.arm(Duration::from_secs(60));
+        assert!(gate.wait().expect("stricter deadline") > Duration::from_secs(30));
+
+        // Once it passes, requests flow again and the deadline is dropped.
+        let passed = RateLimitGate::default();
+        passed.arm(Duration::ZERO);
+        assert_eq!(passed.wait(), None);
+        assert!(passed.until.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_request_in_flight_is_cut_short_by_a_rebuild_poke() {
+        let (tx, mut rx) = mpsc::channel::<Poke>(8);
+        // Nothing waiting -> the request completes normally.
+        assert_eq!(until_poke(&mut rx, async { 7 }).await, Some(7));
+
+        // A poke abandons a request that would otherwise run to its timeout.
+        tx.try_send(Poke).unwrap();
+        let slow = tokio::time::sleep(Duration::from_secs(30));
+        assert_eq!(until_poke(&mut rx, slow).await, None);
+
+        // Websocket task gone: nothing left to interrupt, so the request is seen through.
+        drop(tx);
+        assert_eq!(until_poke(&mut rx, async { 7 }).await, Some(7));
+    }
+
     #[test]
     fn recent_stats_cache_hits_only_on_matching_newest_match() {
         let mut cache = RecentStatsCache::default();
@@ -1450,5 +1829,43 @@ mod tests {
         assert_eq!(cache.get("p", "m2"), None);
         // Persists across matches (not cleared with the per-match cache).
         assert_eq!(cache.get("p", "m1"), Some(stats));
+    }
+
+    #[test]
+    fn recent_stats_cache_evicts_the_oldest_player_past_its_cap() {
+        let mut cache = RecentStatsCache::default();
+        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28) };
+        for i in 0..RECENT_STATS_CACHE_CAP + 2 {
+            cache.put(&format!("p{i}"), "m", stats);
+        }
+        assert_eq!(cache.map.len(), RECENT_STATS_CACHE_CAP);
+        assert_eq!(cache.order.len(), RECENT_STATS_CACHE_CAP);
+        assert_eq!(cache.get("p0", "m"), None);
+        assert_eq!(cache.get("p1", "m"), None);
+        assert_eq!(cache.get("p2", "m"), Some(stats));
+
+        // A returning player whose newest match changed must not queue a second slot.
+        cache.put("p2", "m2", stats);
+        assert_eq!(cache.order.len(), RECENT_STATS_CACHE_CAP);
+        assert_eq!(cache.get("p2", "m2"), Some(stats));
+    }
+
+    #[test]
+    fn dedup_ignores_only_the_timestamp() {
+        let a = TrackerSnapshot::not_running(Some("Waiting for Valorant...".into()));
+        let mut b = a.clone();
+        b.last_updated = a.last_updated + 5_000;
+        assert!(same_content(&a, &b), "a fresh build of the same state must not re-emit");
+
+        b.message = Some("Loading...".into());
+        assert!(!same_content(&a, &b));
+
+        let mut c = a.clone();
+        c.status = AppStatus::Menus;
+        assert!(!same_content(&a, &c));
+
+        let mut d = a.clone();
+        d.enriched = !a.enriched;
+        assert!(!same_content(&a, &d));
     }
 }

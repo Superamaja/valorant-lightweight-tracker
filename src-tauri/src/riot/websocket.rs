@@ -14,20 +14,18 @@ use tokio_tungstenite::tungstenite::Message;
 /// Subscribe frame for presence events.
 const SUBSCRIBE: &str = "[5, \"OnJsonApiEvent_chat_v4_presences\"]";
 
-/// What a presence event means to the session loop. Ordered so `Own` outranks `Other` when a
-/// burst of pokes is collapsed into one: our own presence can carry a state transition, while
-/// another player's only matters during agent select.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Poke {
-    /// Another player's Valorant presence changed (e.g. a teammate locked an agent).
-    Other,
-    /// Our own Valorant presence changed (possible state transition).
-    Own,
-}
+/// A presence event the session loop must react to: our own Valorant presence changed, so a
+/// state transition is possible. Carries nothing — the session re-polls presence over REST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Poke;
 
-/// Classify a raw websocket text frame: `Some(Poke::Own)` when a `/chat/v4/presences` event
-/// carries the local player's Valorant presence, `Some(Poke::Other)` when it carries only
-/// other players' Valorant presences, `None` otherwise. Pure — testable.
+/// Classify a raw websocket text frame: `Some(Poke)` when a `/chat/v4/presences` event carries
+/// the local player's Valorant presence, `None` otherwise. Pure — testable.
+///
+/// Another player's presence is deliberately NOT a poke. It cannot be filtered down to our
+/// lobby here (the roster isn't known), so every online friend's event would otherwise drive a
+/// pregame rebuild — unbounded work on top of the 1 s agent-select poll, which already detects
+/// everything such an event could signal. Outside agent select they never mattered at all.
 ///
 /// Message shape: `[opcode, eventName, { uri, data: { presences: [...] } }]`.
 /// League presence entries are skipped.
@@ -39,29 +37,21 @@ pub fn parse_presence_event(text: &str, own_puuid: &str) -> Option<Poke> {
         return None;
     }
     let presences = payload.get("data")?.get("presences")?.as_array()?;
-    let mut poke = None;
     for p in presences {
         // Skip (don't abort) a single malformed entry so one bad presence in the batch
         // can't discard the whole event (C6). Deserialize by ref to avoid a deep clone.
         let Ok(raw) = RawPresence::deserialize(p) else { continue };
-        if !raw.is_valorant() {
-            continue;
+        if raw.is_valorant() && raw.puuid == own_puuid {
+            return Some(Poke);
         }
-        if raw.puuid == own_puuid {
-            return Some(Poke::Own); // strongest possible answer — stop scanning
-        }
-        // Any other player's Valorant presence counts, including friends not in our match —
-        // filtering would need the roster here. Accepted: Other pokes only cause work during
-        // the short Pregame window, where a spurious rebuild is one cheap glz refetch.
-        poke = Some(Poke::Other);
     }
-    poke
+    None
 }
 
-/// Connect to the local websocket, subscribe, and poke the caller once per Valorant presence
-/// event until the connection drops. The channel carries only the event's `Poke` class — the
-/// session re-polls full presence over REST on every poke, so there's no reason to ship the
-/// presence struct across the channel.
+/// Connect to the local websocket, subscribe, and poke the caller once per own-presence event
+/// until the connection drops. The channel carries a bare `Poke` — the session re-polls full
+/// presence over REST on every poke, so there's no reason to ship the presence struct across
+/// the channel.
 ///
 /// Returns `Ok(())` once a connection was established and later closed (so the caller can
 /// reset its reconnect backoff — C8), and `Err` only when the connection could not be
@@ -144,12 +134,12 @@ mod tests {
     }
 
     #[test]
-    fn own_presence_in_event_is_an_own_poke() {
+    fn own_presence_in_event_is_a_poke() {
         let text = frame(json!([
             { "puuid": "other", "product": "valorant", "private": encode_private("MENUS") },
             { "puuid": "me", "product": "valorant", "private": encode_private("INGAME") }
         ]));
-        assert_eq!(parse_presence_event(&text, "me"), Some(Poke::Own));
+        assert_eq!(parse_presence_event(&text, "me"), Some(Poke));
     }
 
     #[test]
@@ -163,16 +153,20 @@ mod tests {
     }
 
     #[test]
-    fn other_players_presence_is_an_other_poke() {
-        // Agent select: a teammate's presence updates without ours changing.
-        let text = frame(json!([
-            { "puuid": "other", "product": "valorant", "private": encode_private("PREGAME") }
-        ]));
-        assert_eq!(parse_presence_event(&text, "me"), Some(Poke::Other));
+    fn other_players_presence_is_ignored() {
+        // A friend anywhere in the client, or a teammate in agent select: neither can be told
+        // apart from the other here, and the 1 s pregame poll already covers the picks.
+        for state in ["MENUS", "PREGAME", "INGAME"] {
+            let text = frame(json!([
+                { "puuid": "other", "product": "valorant", "private": encode_private(state) }
+            ]));
+            assert_eq!(parse_presence_event(&text, "me"), None);
+        }
     }
 
     #[test]
     fn ignores_non_valorant_products() {
+        // Our own League presence must not be mistaken for a Valorant state change.
         let text = frame(json!([
             { "puuid": "other", "product": "league_of_legends", "championId": 157 },
             { "puuid": "me", "product": "league_of_legends", "championId": 12 }
@@ -185,9 +179,9 @@ mod tests {
         // A single unparseable entry is skipped, not fatal (C6).
         let text = frame(json!([
             { "product": "valorant" }, // no puuid -> undeserializable
-            { "puuid": "other", "product": "valorant", "private": encode_private("PREGAME") }
+            { "puuid": "me", "product": "valorant", "private": encode_private("PREGAME") }
         ]));
-        assert_eq!(parse_presence_event(&text, "me"), Some(Poke::Other));
+        assert_eq!(parse_presence_event(&text, "me"), Some(Poke));
     }
 
     #[test]
@@ -195,10 +189,5 @@ mod tests {
         assert!(parse_presence_event("not json", "me").is_none());
         assert!(parse_presence_event("{}", "me").is_none());
         assert!(parse_presence_event("[8]", "me").is_none());
-    }
-
-    #[test]
-    fn own_outranks_other() {
-        assert!(Poke::Own > Poke::Other);
     }
 }

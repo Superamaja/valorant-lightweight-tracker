@@ -7,6 +7,7 @@ use crate::riot::constants::{RECENT_MATCHES_FOR_HS, RECENT_RESULTS_COUNT};
 use crate::riot::types::MatchResult;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashMap;
 
 // --- competitiveupdates ------------------------------------------------------
 
@@ -100,7 +101,21 @@ pub struct MatchTotals {
     pub kd_matches: u32,
 }
 
+/// What one match-details payload contributes to each player who appears in it, keyed by
+/// puuid. This is all the caller keeps of a ~500 KB response.
+pub type MatchContribution = HashMap<String, MatchTotals>;
+
 impl MatchTotals {
+    /// Fold another match's totals into this window.
+    pub fn add(&mut self, other: MatchTotals) {
+        self.head += other.head;
+        self.body += other.body;
+        self.leg += other.leg;
+        self.kills += other.kills;
+        self.deaths += other.deaths;
+        self.kd_matches += other.kd_matches;
+    }
+
     pub fn total_hits(&self) -> u64 {
         self.head + self.body + self.leg
     }
@@ -137,16 +152,19 @@ impl MatchTotals {
     }
 }
 
-/// Accumulate a single match-details payload's totals for `subject` into `acc`: head/body/leg
-/// hits summed over every damage entry of every round's `playerStats` (replicating vRY
-/// `player_stats.py`), plus the kills/deaths the top-level `players[]` entry already carries.
+/// Reduce one match-details payload to every player's totals: head/body/leg hits summed over
+/// every damage entry of every round's `playerStats` (replicating vRY `player_stats.py`), plus
+/// the kills/deaths the top-level `players[]` entry already carries. Every player is read in
+/// the one pass, so a match several lobby members played is parsed — and downloaded — once.
 /// Borrows `value` (no deep clone). Missing fields default to 0.
-pub fn accumulate_match_totals(acc: &mut MatchTotals, value: &Value, subject: &str) {
-    accumulate_hits(acc, value, subject);
-    accumulate_kills_deaths(acc, value, subject);
+pub fn match_contribution(value: &Value) -> MatchContribution {
+    let mut out = MatchContribution::new();
+    collect_hits(&mut out, value);
+    collect_kills_deaths(&mut out, value);
+    out
 }
 
-fn accumulate_hits(acc: &mut MatchTotals, value: &Value, subject: &str) {
+fn collect_hits(out: &mut MatchContribution, value: &Value) {
     let Some(rounds) = value.get("roundResults").and_then(|r| r.as_array()) else {
         return;
     };
@@ -155,12 +173,13 @@ fn accumulate_hits(acc: &mut MatchTotals, value: &Value, subject: &str) {
             continue;
         };
         for ps in player_stats {
-            if ps.get("subject").and_then(|s| s.as_str()) != Some(subject) {
+            let Some(subject) = ps.get("subject").and_then(|s| s.as_str()) else {
                 continue;
-            }
+            };
             let Some(damage) = ps.get("damage").and_then(|d| d.as_array()) else {
                 continue;
             };
+            let acc = out.entry(subject.to_string()).or_default();
             for d in damage {
                 acc.head += d.get("headshots").and_then(|v| v.as_u64()).unwrap_or(0);
                 acc.body += d.get("bodyshots").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -172,17 +191,18 @@ fn accumulate_hits(acc: &mut MatchTotals, value: &Value, subject: &str) {
 
 /// The match-wide totals live once per player in the payload's top-level `players[]`, each
 /// entry a `subject` puuid plus a `stats` object with `kills`/`deaths`.
-fn accumulate_kills_deaths(acc: &mut MatchTotals, value: &Value, subject: &str) {
+fn collect_kills_deaths(out: &mut MatchContribution, value: &Value) {
     let Some(players) = value.get("players").and_then(|p| p.as_array()) else {
         return;
     };
     for player in players {
-        if player.get("subject").and_then(|s| s.as_str()) != Some(subject) {
+        let Some(subject) = player.get("subject").and_then(|s| s.as_str()) else {
             continue;
-        }
+        };
         let Some(player_stats) = player.get("stats") else {
             continue;
         };
+        let acc = out.entry(subject.to_string()).or_default();
         acc.kills += player_stats.get("kills").and_then(|v| v.as_u64()).unwrap_or(0);
         acc.deaths += player_stats.get("deaths").and_then(|v| v.as_u64()).unwrap_or(0);
         acc.kd_matches += 1;
@@ -193,6 +213,11 @@ fn accumulate_kills_deaths(acc: &mut MatchTotals, value: &Value, subject: &str) 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// What one payload contributes to `subject`'s window, the way a caller folds it in.
+    fn totals_for(value: &Value, subject: &str) -> MatchTotals {
+        match_contribution(value).get(subject).copied().unwrap_or_default()
+    }
 
     #[test]
     fn result_sign_including_zero_ambiguity() {
@@ -272,7 +297,7 @@ mod tests {
             ]}
         ]});
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &payload, "me");
+        acc.add(totals_for(&payload, "me"));
         assert_eq!(acc.head, 9);
         assert_eq!(acc.body, 26);
         assert_eq!(acc.leg, 1);
@@ -291,8 +316,8 @@ mod tests {
             { "subject": "me", "damage": [ { "headshots": 1, "bodyshots": 0, "legshots": 0 } ] }
         ]}]});
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &m1, "me");
-        accumulate_match_totals(&mut acc, &m2, "me");
+        acc.add(totals_for(&m1, "me"));
+        acc.add(totals_for(&m2, "me"));
         // head 2, body 1, leg 0 -> 2/3 = 66.67 -> 67
         assert_eq!(acc.headshot_percent(), Some(67));
     }
@@ -315,7 +340,7 @@ mod tests {
             { "subject": "someone-else", "damage": [ { "headshots": 3, "bodyshots": 0, "legshots": 0 } ] }
         ]}]});
         let mut acc2 = MatchTotals::default();
-        accumulate_match_totals(&mut acc2, &payload, "me");
+        acc2.add(totals_for(&payload, "me"));
         assert_eq!(acc2.headshot_percent(), None);
     }
 
@@ -336,8 +361,8 @@ mod tests {
         let m1 = kd_payload(&[("me", 20, 15), ("other", 99, 1)]);
         let m2 = kd_payload(&[("me", 17, 14)]);
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &m1, "me");
-        accumulate_match_totals(&mut acc, &m2, "me");
+        acc.add(totals_for(&m1, "me"));
+        acc.add(totals_for(&m2, "me"));
         assert_eq!(acc.kills, 37);
         assert_eq!(acc.deaths, 29);
         assert_eq!(acc.kd_matches, 2);
@@ -345,9 +370,33 @@ mod tests {
     }
 
     #[test]
+    fn one_parse_yields_every_players_totals() {
+        // The whole payload is read in one pass, so two lobby members who played the same
+        // match both come out of a single download.
+        let payload = json!({
+            "players": [
+                { "subject": "a", "stats": { "kills": 20, "deaths": 15 } },
+                { "subject": "b", "stats": { "kills": 9, "deaths": 18 } }
+            ],
+            "roundResults": [ { "playerStats": [
+                { "subject": "a", "damage": [ { "headshots": 2, "bodyshots": 2, "legshots": 0 } ] },
+                { "subject": "b", "damage": [ { "headshots": 0, "bodyshots": 4, "legshots": 0 } ] }
+            ]}]
+        });
+        let contribution = match_contribution(&payload);
+        assert_eq!(contribution.len(), 2);
+        assert_eq!(contribution["a"].headshot_percent(), Some(50));
+        assert_eq!(contribution["a"].kd(), Some(1.33));
+        assert_eq!(contribution["b"].headshot_percent(), Some(0));
+        assert_eq!(contribution["b"].kd(), Some(0.5));
+        // A player who never appeared is simply absent.
+        assert!(!contribution.contains_key("c"));
+    }
+
+    #[test]
     fn kd_rounds_to_two_decimals() {
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &kd_payload(&[("me", 2, 3)]), "me");
+        acc.add(totals_for(&kd_payload(&[("me", 2, 3)]), "me"));
         // 0.6666... -> 0.67
         assert_eq!(acc.kd(), Some(0.67));
     }
@@ -355,7 +404,7 @@ mod tests {
     #[test]
     fn kd_with_zero_deaths_is_the_kill_count() {
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &kd_payload(&[("me", 7, 0)]), "me");
+        acc.add(totals_for(&kd_payload(&[("me", 7, 0)]), "me"));
         assert_eq!(acc.kd(), Some(7.0));
     }
 
@@ -365,12 +414,12 @@ mod tests {
         assert_eq!(MatchTotals::default().kd(), None);
         // Matches processed, but none carried a stats entry for this player.
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &kd_payload(&[("someone-else", 30, 2)]), "me");
+        acc.add(totals_for(&kd_payload(&[("someone-else", 30, 2)]), "me"));
         assert_eq!(acc.kd_matches, 0);
         assert_eq!(acc.kd(), None);
         // A players[] entry without a stats object is not counted either.
         let mut acc2 = MatchTotals::default();
-        accumulate_match_totals(&mut acc2, &json!({ "players": [ { "subject": "me" } ] }), "me");
+        acc2.add(totals_for(&json!({ "players": [ { "subject": "me" } ] }), "me"));
         assert_eq!(acc2.kd(), None);
     }
 
@@ -384,7 +433,7 @@ mod tests {
             ]}]
         });
         let mut acc = MatchTotals::default();
-        accumulate_match_totals(&mut acc, &payload, "me");
+        acc.add(totals_for(&payload, "me"));
         let stats = acc.recent_stats();
         assert_eq!(stats.headshot_percent, Some(50));
         assert_eq!(stats.kd, Some(1.5));

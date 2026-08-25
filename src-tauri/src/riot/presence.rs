@@ -146,6 +146,19 @@ pub fn info_for(raw: &RawPresence) -> Result<PresenceInfo> {
     Ok(extract_info(&decoded))
 }
 
+/// The party a decoded presence belongs to, and only when it is a real party (size > 1) —
+/// everything `party_grouping` reads. Pulling just these two fields out avoids building a whole
+/// `PresenceInfo` per online friend on every rebuild.
+fn real_party_id(decoded: &Value) -> Option<String> {
+    let size = dual(decoded, "partyPresenceData", "partySize").and_then(json_u32)?;
+    if size <= 1 {
+        return None;
+    }
+    dual(decoded, "partyPresenceData", "partyId")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 /// Build puuid -> partyId grouping across every online presence, keeping only real
 /// parties (partySize > 1). LoL entries are skipped; undecodable entries are ignored.
 pub fn party_grouping(presences: &[RawPresence]) -> HashMap<String, String> {
@@ -154,12 +167,11 @@ pub fn party_grouping(presences: &[RawPresence]) -> HashMap<String, String> {
         if !p.is_valorant() {
             continue;
         }
-        if let Ok(info) = info_for(p) {
-            if let (Some(id), Some(size)) = (info.party_id, info.party_size) {
-                if size > 1 {
-                    out.insert(p.puuid.clone(), id);
-                }
-            }
+        let Ok(decoded) = decode_private(p.private.as_deref().unwrap_or("")) else {
+            continue;
+        };
+        if let Some(id) = real_party_id(&decoded) {
+            out.insert(p.puuid.clone(), id);
         }
     }
     out
@@ -301,7 +313,23 @@ mod tests {
         ];
         let grouping = party_grouping(&presences);
         assert!(!grouping.contains_key("s"));
+        assert_eq!(grouping.len(), 2);
         assert_eq!(grouping.get("a"), Some(&"duo".to_string()));
         assert_eq!(grouping.get("b"), Some(&"duo".to_string()));
+    }
+
+    #[test]
+    fn only_real_parties_are_read_out_of_a_presence() {
+        // The grouping needs nothing but these two fields, in either presence shape.
+        let nested = json!({
+            "partyPresenceData": { "partyId": "duo", "partySize": 2 },
+            "matchPresenceData": { "sessionLoopState": "MENUS" }
+        });
+        assert_eq!(real_party_id(&nested).as_deref(), Some("duo"));
+        assert_eq!(real_party_id(&json!({ "partyId": "duo", "partySize": "2" })).as_deref(), Some("duo"));
+        // Solo, sizeless and id-less presences all group to nothing.
+        assert_eq!(real_party_id(&json!({ "partyId": "solo", "partySize": 1 })), None);
+        assert_eq!(real_party_id(&json!({ "partyId": "duo" })), None);
+        assert_eq!(real_party_id(&json!({ "partySize": 5 })), None);
     }
 }

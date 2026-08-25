@@ -308,6 +308,32 @@ pub fn save_cache(data: &StaticData) -> Result<()> {
     Ok(())
 }
 
+/// Whether `file_name` is a static-cache file for some version other than the one in use
+/// (`keep`, itself a file name). Only files this module writes are ever touched. Pure.
+fn is_stale_cache_file(file_name: &str, keep: &str) -> bool {
+    file_name != keep && file_name.starts_with("static-") && file_name.ends_with(".json")
+}
+
+/// Delete the cache files of every version but `version`, so a patched client doesn't leave its
+/// predecessors' blobs on disk forever. Best-effort: any failure just leaves the file there.
+fn prune_cache(version: &str) {
+    let (Some(dir), Some(keep)) = (cache_dir(), cache_file(version)) else {
+        return;
+    };
+    let Some(keep) = keep.file_name().and_then(|n| n.to_str()).map(String::from) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_str().is_some_and(|n| is_stale_cache_file(n, &keep)) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Whether a valorant-api payload carries a usable, non-empty `data` array. A JSON error body
 /// (429/5xx) has no such array, and an empty one means the endpoint answered with nothing
 /// worth caching. Pure — testable.
@@ -357,6 +383,7 @@ pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
     let version = fetch_version(client).await?;
 
     if let Some(cached) = load_cache(&version) {
+        prune_cache(&version);
         return Ok(cached);
     }
 
@@ -374,6 +401,7 @@ pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
         return Err(Error::MalformedPayload("valorant-api payloads parsed to empty mappings".into()));
     }
     let _ = save_cache(&data); // best-effort cache write
+    prune_cache(&data.version);
     Ok(data)
 }
 
@@ -524,6 +552,17 @@ mod tests {
         assert!(!build(String::new(), &agents, &maps, &tiers, &weapons).is_complete());
         // All four present -> cacheable.
         assert!(build("v".into(), &agents, &maps, &tiers, &weapons).is_complete());
+    }
+
+    #[test]
+    fn pruning_keeps_the_current_version_and_only_touches_our_own_files() {
+        let keep = "static-release-13.04.json";
+        assert!(!is_stale_cache_file(keep, keep));
+        assert!(is_stale_cache_file("static-release-13.03.json", keep));
+        // Anything this module didn't write is left alone.
+        assert!(!is_stale_cache_file("notes.txt", keep));
+        assert!(!is_stale_cache_file("static-release-13.03.json.bak", keep));
+        assert!(!is_stale_cache_file("other-13.03.json", keep));
     }
 
     #[test]
