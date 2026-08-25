@@ -1,6 +1,6 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-08-24 (phase 2 stats added). Status: backend implemented; this is the
+Last updated: 2026-08-25 (phase 2 stats added; `kd` added). Status: backend implemented; this is the
 exact TypeScript-facing contract the UI agent builds against. Everything the frontend
 receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
 
@@ -48,10 +48,10 @@ sequential fetching, so the backend does not make the UI wait for them):
    and per row the `name`, `agent`, `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
    `peakRankAct`, `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
    no extra request). The heavier fields are **not yet populated**: `rrChange` is `null`,
-   `recentResults` is `[]`, `headshotPercent` is `null`, and `vandalSkin` / `phantomSkin`
-   are `null`.
+   `recentResults` is `[]`, `headshotPercent` and `kd` are `null`, and `vandalSkin` /
+   `phantomSkin` are `null`.
 2. **Enriched snapshot** — a moment later, the same rows with `rrChange`, `recentResults`,
-   `headshotPercent`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
+   `headshotPercent`, `kd`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
 
 The UI **must render the fast snapshot immediately** and let those fields fill in on the
 enriched event. **Key loading skeletons on the snapshot's `enriched` flag: `enriched === false`
@@ -141,6 +141,8 @@ interface PlayerRow {
   rrChange: number | null;      // ΔRR of the player's newest competitive match; null if none
   recentResults: MatchResult[]; // up to 5 recent comp results, newest first; [] when none
   headshotPercent: number | null; // HS% over recent comp matches (0–100); null when "N/a"
+  kd: number | null;            // kills/deaths over the same recent comp matches, 2 decimals;
+                                // null when those matches carry no stats for the player
   vandalSkin: SkinInfo | null;  // equipped Vandal skin; null in Pregame / Menus
   phantomSkin: SkinInfo | null; // equipped Phantom skin; null in Pregame / Menus
 }
@@ -227,7 +229,7 @@ interface RankInfo {
 ### Phase 2 stat fields
 
 - **All phase-2 stats are populated for every player, incognito included** — a hidden player
-  still shows WR / ΔRR / last-5 / HS% / skins; only `name` and `accountLevel` are withheld
+  still shows WR / ΔRR / last-5 / HS% / KD / skins; only `name` and `accountLevel` are withheld
   (their puuid is known, so the stats are real). This matches vRY.
 - **`winRate`** is derived from the same MMR payload used for ranks (no extra request):
   `{ percent, games }` where `percent = round(NumberOfWins / NumberOfGames * 100)`. `null`
@@ -242,6 +244,13 @@ interface RankInfo {
 - **`headshotPercent`** is an integer 0–100 computed over the last few competitive matches
   (`headshots / (headshots + bodyshots + legshots)`, matching vRY). `null` when the player
   has no recent matches (render "N/a").
+- **`kd`** is total kills / total deaths across the **same** recent competitive matches HS% is
+  computed from — it rides those already-downloaded match-details payloads and costs **zero
+  extra requests**. Rounded to 2 decimals (e.g. `1.28`); a window with 0 deaths yields the kill
+  count itself (7 kills, 0 deaths -> `7`). `null` in exactly the cases `headshotPercent` is
+  null (no recent competitive matches), plus when the fetched matches carry no per-player stats
+  entry for that player. Render "N/A" for null. It is cached and withheld identically to
+  `headshotPercent` (both come from one payload, so they always appear together).
 - **`vandalSkin` / `phantomSkin`** are populated only in `Ingame` (Riot exposes loadouts only
   once the match starts) — both are `null` in `Pregame` and `Menus`. A `SkinInfo` with an
   empty `name` means the skin uuid was not in the static-data cache (render the icon if

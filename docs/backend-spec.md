@@ -431,7 +431,7 @@ Phantom skins). New modules: `riot/stats.rs` (competitiveupdates + match-details
 `riot/loadout.rs` (skin-id extraction). Extended: `riot/rank.rs` (`compute_win_rate`),
 `riot/static_data.rs` (weapon-skin cache from `/v1/weapons/skins`), `riot/remote_api.rs`
 (`competitive_updates`, `match_details`, `coregame_loadouts`), `riot/types.rs`
-(`WinRate`, `MatchResult`, `SkinInfo` + 6 `PlayerRow` fields), `app_state.rs` (stat fetch
+(`WinRate`, `MatchResult`, `SkinInfo` + 6 `PlayerRow` fields, later + `kd`), `app_state.rs` (stat fetch
 + caching), `riot/assemble.rs` (wiring + row ordering). New `PlayerRow` fields and exact
 serde camelCase names are in `docs/ipc-contract.md`.
 
@@ -455,6 +455,19 @@ serde camelCase names are in `docs/ipc-contract.md`.
   id** in a session-lived `HsCache` (survives match→menus→match; self-invalidates when the
   player plays a new comp match). Deviation from the wishlist's "match-history + match-details"
   wording: match-history is not fetched — competitiveupdates supplies the ids for free.
+- **KD (2026-08-25)** — total kills / total deaths over the **same** `RECENT_MATCHES_FOR_HS`
+  window, from the **same** match-details payloads HS% already downloads: **zero new
+  requests**. Source is the payload's top-level `players[]` (each entry a `subject` puuid plus
+  a `stats` object with `kills`/`deaths`), accumulated in the same pass as the head/body/leg
+  hits — `stats::MatchTotals` (the former `HitCounts`) now carries both, and yields the pair as
+  a `stats::RecentStats { headshot_percent, kd }`. Rounded to 2 decimals; 0 deaths yields the
+  kill count itself (7/0 -> 7.0); `null` when the player has no recent competitive matches
+  (same condition as HS%) or when no fetched match carried a stats entry for them. It shares
+  HS%'s per-match cache and the session-lived cache (renamed `RecentStatsCache`, still keyed by
+  puuid + newest competitive match id) and the same "shown for incognito players too" rule,
+  since both figures come out of one download. `PlayerRow.kd: Option<f64>` — the float is why
+  `PlayerRow`/`TrackerSnapshot` derive `PartialEq` but no longer `Eq`; snapshot dedup only ever
+  used `PartialEq`, and the value is a finite ratio.
 - **Vandal + Phantom skins** — `GET /core-game/v1/matches/{id}/loadouts`, 1 request/match,
   **INGAME only** (pregame/menus → `null`). Path `Loadouts[].Loadout.Items["<weapon
   uuid>"].Sockets["bcef87d6-…"].Item.ID` → skin uuid → `/v1/weapons/skins` cache for name +
@@ -473,8 +486,9 @@ core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) 
 2**: 10 competitiveupdates + up to 10×3 = 30 match-details + 1 loadouts = **41 new requests**.
 All routed through the existing 429 retry with a `INTER_REQUEST_DELAY_MS = 120` pause between
 per-player requests. Re-entry for the same match (score changes every round) refetches
-**nothing** — `MatchCache` serves it; returning players skip match-details via `HsCache`. WR
-adds **0** requests (reuses phase-1 MMR).
+**nothing** — `MatchCache` serves it; returning players skip match-details via
+`RecentStatsCache`. WR adds **0** requests (reuses phase-1 MMR), and so does KD (it reads the
+match-details already fetched for HS%).
 
 ### Review-pass fixes (2026-08-24)
 
@@ -583,9 +597,9 @@ backend side (`ipc-contract.md` updated to match):
 
 ### Testing
 
-- 92 unit tests (86 as below + 6 from the phase-2 review fixes: the `MatchCache` freshness
-  rule incl. the pregame-stale-when-ingame guard and same-match reuse, plus round-half-to-even
-  tie cases for WR and HS%), all pure functions, driven by inline JSON fixtures
+- 119 unit tests today; the list below was written at 92 (86 as below + 6 from the phase-2
+  review fixes: the `MatchCache` freshness rule incl. the pregame-stale-when-ingame guard and
+  same-match reuse, plus round-half-to-even tie cases for WR and HS%), all pure functions, driven by inline JSON fixtures
   authored from this spec's documented shapes (phase-2 fixtures sanitized from the live probe
   captures — fake puuids/names/skin ids, real numeric values): lockfile parsing, presence
   decode (nested + flat + custom-game + LoL skip
@@ -598,7 +612,10 @@ backend side (`ipc-contract.md` updated to match):
   (incl. 0-games null + rounding), ΔRR + last-5 pips (incl. 0-RR `Unknown` ambiguity), HS%
   math (hand-computed 9/26/1 → 25% from the real capture, then sanitized) incl. cross-match
   accumulation, loadout skin extraction (Vandal + Phantom), the HS% single-fetch cache, and
-  row ordering (self-first, ally-block-first, deterministic name/puuid tiebreak).
+  row ordering (self-first, ally-block-first, deterministic name/puuid tiebreak). The KD pass
+  adds 5 more (cross-match accumulation ignoring other subjects, 2-decimal rounding, the
+  zero-deaths case, no-stats → `None`, and HS%+KD from one payload) plus a null-both assemble
+  case: **119 tests** in total.
 - **Not covered by tests (requires a live client):** the async orchestration loop in
   `app_state.rs`, the actual HTTP/WS calls, token-refresh-on-`BAD_CLAIMS` round trips, and the
   real end-to-end state transitions. These compile and are structured for graceful degradation

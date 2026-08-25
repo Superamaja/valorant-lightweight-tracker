@@ -56,6 +56,21 @@ export function HeadshotCell({ percent, loading }: { percent: number | null; loa
   );
 }
 
+export function KdCell({ kd, loading }: { kd: number | null; loading: boolean }) {
+  return (
+    <Stat
+      missing={kd === null}
+      loading={loading}
+      className="tabular-nums text-neutral-300"
+      title={
+        kd === null ? "No recent competitive matches" : `Kills/deaths over the ${HS_SCOPE}`
+      }
+    >
+      {kd === null ? null : kd.toFixed(2)}
+    </Stat>
+  );
+}
+
 /** Win rate ships with the fast snapshot, so it never shows a skeleton. */
 export function WinRateCell({ winRate }: { winRate: WinRate | null }) {
   return (

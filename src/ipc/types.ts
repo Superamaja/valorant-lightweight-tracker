@@ -68,6 +68,8 @@ export interface PlayerRow {
   rrChange: number | null;
   recentResults: MatchResult[];
   headshotPercent: number | null;
+  /** Kills/deaths over the same match window as `headshotPercent`, rounded to 2 decimals. */
+  kd: number | null;
   vandalSkin: SkinInfo | null;
   phantomSkin: SkinInfo | null;
 }

@@ -5,7 +5,7 @@ import { AgentCell } from "./cells/AgentCell";
 import { NameCell } from "./cells/NameCell";
 import { PeakCell, RankCell } from "./cells/RankCell";
 import { SkinCell } from "./cells/SkinCell";
-import { HeadshotCell, ResultPips, RrChangeCell, WinRateCell } from "./cells/StatCells";
+import { HeadshotCell, KdCell, ResultPips, RrChangeCell, WinRateCell } from "./cells/StatCells";
 
 /** Same colour for everyone in a party. Solo players keep the column empty. */
 function PartyDot({ mark }: { mark: PartyMark | undefined }) {
@@ -58,6 +58,7 @@ export function PlayerRow({
       />
       <PeakCell rank={player.peakRank} act={player.peakRankAct} />
       <HeadshotCell percent={player.headshotPercent} loading={layout.loading} />
+      <KdCell kd={player.kd} loading={layout.loading} />
       <WinRateCell winRate={player.winRate} />
       <ResultPips results={player.recentResults} loading={layout.loading} />
       <RrChangeCell change={player.rrChange} loading={layout.loading} />
