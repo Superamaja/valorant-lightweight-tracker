@@ -19,6 +19,9 @@ Later work, in rough order. Items move out of here and into project-context.md w
 
 ## Later
 
+- **Unranked (tier 0) icon** — valorant-api's competitivetiers table has a real Unranked icon at tier 0, but the backend emits `iconUrl: null` for tier 0 (current and peak), so the UI draws an empty dashed circle. Find where tier-0 icons are dropped (static_data / rank / assemble) and pass the icon through like any other tier.
+- **Party grouping diagnosis** — `partyId` came back empty for all 10 players in the first real lobby (capture 2026-08-24). Root cause suspected: match players never appeared in the local `/chat/v4/presences` roster (raw in-match probe showed only self + League friends), while our party derivation assumes they do. vRY demonstrably shows parties, so compare its `presences.py` at the pinned commit (does it wait/retry for match players to join the chat roster?) and mirror the mechanism. Also extend `VLT_DEBUG_CAPTURE` to dump raw presences JSON per rebuild (same best-effort, gitignored, debug-gated pattern) so the next real match definitively shows what the roster holds. Degrade gracefully to no dots if the data never appears.
+- **Header score display** — live round score is already in the data we fetch: own presence `partyOwnerMatchScoreAllyTeam` / `partyOwnerMatchScoreEnemyTeam`. Nearly free to expose in the snapshot + header.
 - **Discord RPC** — architecture seam exists; not built (user decision).
 - **vRY upstream check** — user-triggered every few weeks; procedure + last-checked hash live in docs/maintenance.md.
 
