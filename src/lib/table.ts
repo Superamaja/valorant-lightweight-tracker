@@ -45,7 +45,7 @@ const COLUMNS: Column[] = [
   { key: "hs", label: "HS%", width: "minmax(46px,1fr)", hint: `Headshot % over the ${HS_SCOPE}` },
   { key: "kd", label: "KD", width: "minmax(46px,1fr)", hint: `Kills/deaths over the ${HS_SCOPE}` },
   { key: "wr", label: "WR", width: "minmax(62px,1fr)" },
-  { key: "recent", label: "Last 5", width: "minmax(68px,1fr)" },
+  { key: "recent", label: "Last 5", width: "minmax(56px,1fr)" },
   { key: "delta", label: "ΔRR", width: "minmax(46px,1fr)" },
 ];
 

@@ -108,7 +108,8 @@ export function RrChangeCell({ change, loading }: { change: number | null; loadi
   );
 }
 
-const PIP = "h-1.5 w-2.5 rounded-[2px]";
+/** The whole bar. `gap-px` lets the container's colour show through as the segment splits. */
+const BAR = "flex h-1.5 w-14 gap-px overflow-hidden rounded-full bg-base";
 const PIP_TONE: Record<MatchResult, string> = {
   Win: "bg-win",
   Loss: "bg-loss",
@@ -117,7 +118,7 @@ const PIP_TONE: Record<MatchResult, string> = {
 const PIP_LETTER: Record<MatchResult, string> = { Win: "W", Loss: "L", Unknown: "?" };
 const SLOTS = [0, 1, 2, 3, 4];
 
-/** Last five competitive results, newest first. Empty slots keep the column aligned. */
+/** Last five competitive results, newest first. Empty segments keep the column aligned. */
 export function ResultPips({ results, loading }: { results: MatchResult[]; loading: boolean }) {
   const empty = results.length === 0;
   const title = empty
@@ -126,17 +127,27 @@ export function ResultPips({ results, loading }: { results: MatchResult[]; loadi
       : "No recent competitive matches"
     : `Last ${results.length}, newest first: ${results.map((r) => PIP_LETTER[r]).join(" ")}`;
 
+  if (empty && loading) {
+    return (
+      <span className="flex justify-center">
+        <Skeleton className="h-1.5 w-14 rounded-full" />
+      </span>
+    );
+  }
+
   return (
-    <div className="flex justify-center gap-1" title={title}>
-      {SLOTS.map((slot) => {
-        const result = results[slot];
-        if (result) return <span key={slot} className={`${PIP} ${PIP_TONE[result]}`} />;
-        return empty && loading ? (
-          <Skeleton key={slot} className={PIP} />
-        ) : (
-          <span key={slot} className={`${PIP} bg-white/5`} />
-        );
-      })}
-    </div>
+    <span className="flex justify-center" title={title}>
+      <span className={BAR}>
+        {SLOTS.map((slot) => {
+          const result = results[slot];
+          return (
+            <span
+              key={slot}
+              className={`flex-1 ${result ? PIP_TONE[result] : "bg-white/5"}`}
+            />
+          );
+        })}
+      </span>
+    </span>
   );
 }
