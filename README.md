@@ -4,9 +4,41 @@ A lightweight Windows desktop app that shows an **in-match player table** for
 your current VALORANT match: everyone's rank, RR, peak rank, level, agent, and
 per-player stats in a clean GUI.
 
-<!-- App screenshot goes here once ready:
 ![Valorant Lightweight Tracker showing an in-match player table](docs/assets/app-screenshot.png)
--->
+
+## Why this tracker
+
+Sites and overlay apps make you tab out, log in, or feed a heavy client just to
+see who you're playing with. This is the other extreme: a single small `.exe`
+that reads your own Riot client locally and puts the whole lobby in one clean
+window the moment agent select opens.
+
+- **No account, no login, no setup.** Run the exe while VALORANT is open. Done.
+- **Genuinely lightweight.** A tiny native app (Tauri, Rust backend), not an
+  Electron giant. It talks straight to the local Riot client and makes the
+  fewest network requests it can get away with.
+- **Nothing injected, no overlay.** It never touches the game process; it only
+  reads the same local API the client itself exposes.
+
+## What you see
+
+For every player in your match:
+
+- **Rank, RR, and peak rank** with the act it was earned in (like `E6: A3`),
+  plus leaderboard placement for top Immortal+ players.
+- **Headshot %, K/D, win rate, and last 5 results** from recent competitive
+  matches, so you can spot the smurf before the first round.
+- **Equipped Vandal and Phantom skins** for the whole lobby.
+- **Agent picks live during agent select**, updating as teammates pick and lock.
+- **Account level badges**, with hidden levels and incognito names respected:
+  the tracker shows what Riot allows and never de-anonymizes anyone.
+- **Party indicators** for premade groups it can detect.
+- The table sticks around after the match ends, so you can screenshot or review
+  the lobby from the menus.
+
+Everything streams in automatically: launch it once and it follows you from
+menus to agent select to the match, reconnecting on its own if the game
+restarts.
 
 ## Download
 
