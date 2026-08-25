@@ -172,6 +172,19 @@ fn poke_triggers_rebuild(poke: Poke, status: AppStatus) -> bool {
     poke == Poke::Own || status == AppStatus::Pregame
 }
 
+/// Agent-select poll cadence (see `poll_interval`).
+const PREGAME_POLL_MS: u64 = 1000;
+
+/// How long the loop may wait for a poke before rebuilding anyway, for a given status.
+/// `Some` only in Pregame: Riot pushes no presence event when a NON-FRIEND lobby player picks
+/// or locks an agent, and our own presence doesn't change either, so agent select would sit
+/// still for its whole ~100 s after the entry events. Polling the local pregame endpoint once
+/// a second keeps the roster live (vRY's main loop polls for the same reason). Every other
+/// status stays purely event-driven — `None` means "wait indefinitely". Pure.
+fn poll_interval(status: AppStatus) -> Option<Duration> {
+    (status == AppStatus::Pregame).then(|| Duration::from_millis(PREGAME_POLL_MS))
+}
+
 /// Drain the poke channel, returning the strongest poke that was waiting (`None` if empty).
 fn drain_pokes(rx: &mut mpsc::Receiver<Poke>) -> Option<Poke> {
     let mut strongest = None;
@@ -449,14 +462,29 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
 /// Wait for a poke that warrants a rebuild for the currently published status, collapsing
 /// each burst into one (L1). Pokes that don't warrant one (another player's presence outside
 /// agent select) are dropped without any refetch. Returns false when the websocket task ended.
+///
+/// In Pregame the wait is bounded by `poll_interval`, so an elapsed timeout triggers a rebuild
+/// just like a poke would — that tick is what makes teammates' agent picks visible, since Riot
+/// pushes no presence event for them. Identical rebuilds are suppressed by the snapshot dedup
+/// in `publish`, and a tick can't stack with pokes: the rebuild drains the channel anyway.
 async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerState) -> bool {
-    while let Some(first) = rx.recv().await {
+    loop {
+        let first = match poll_interval(state.status()) {
+            Some(tick) => match tokio::time::timeout(tick, rx.recv()).await {
+                Ok(Some(poke)) => poke,
+                Ok(None) => return false, // websocket task ended -> client gone
+                Err(_) => return true,    // poll tick -> rebuild agent select
+            },
+            None => match rx.recv().await {
+                Some(poke) => poke,
+                None => return false,
+            },
+        };
         let poke = collapse(drain_pokes(rx), first);
         if poke_triggers_rebuild(poke, state.status()) {
             return true;
         }
     }
-    false
 }
 
 /// Build a snapshot and publish it, routing BadClaims through a token refresh + one retry
@@ -935,6 +963,19 @@ mod tests {
         assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Ingame));
         assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Menus));
         assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::ValorantNotRunning));
+    }
+
+    #[test]
+    fn only_pregame_polls_on_a_timer() {
+        // Agent select gets a bounded wait (no presence events for non-friends' picks); every
+        // other state stays purely event-driven.
+        assert_eq!(
+            poll_interval(AppStatus::Pregame),
+            Some(Duration::from_millis(PREGAME_POLL_MS))
+        );
+        assert_eq!(poll_interval(AppStatus::Ingame), None);
+        assert_eq!(poll_interval(AppStatus::Menus), None);
+        assert_eq!(poll_interval(AppStatus::ValorantNotRunning), None);
     }
 
     #[test]

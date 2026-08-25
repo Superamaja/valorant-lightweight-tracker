@@ -420,6 +420,19 @@ could not be verified because Valorant was not running on the build machine (no 
   locking an agent) while other states only react to our own. §4-A's "ignore other players'
   presence events" therefore holds everywhere except Pregame. A drained burst collapses to the
   strongest poke (`Own` wins), and the reconnect re-poll is always an `Own` poke.
+- **Pregame poll tick (2026-08-25)**: presence events alone are not enough during agent select.
+  Riot pushes no presence event when a **non-friend** lobby player picks or locks an agent, and
+  our own presence doesn't change either — live captures showed 3 rebuilds in the first ~8 s of
+  Pregame (the entry events) and then **zero for ~100 s** until Ingame, so teammates' picks
+  never appeared. vRY sees them because its main loop polls. `app_state::wait_for_rebuild_poke`
+  therefore bounds its wait with `tokio::time::timeout` whenever `poll_interval(status)` is
+  `Some` — Pregame only, at `PREGAME_POLL_MS = 1000`. An elapsed tick is a rebuild trigger
+  equivalent to a poke, so the pregame `CharacterID` / `agentSelectionState` per ally refreshes
+  every second. Cost: one local pregame GET per second, **only** during agent select (the
+  fully-cached path serves it — no name/MMR/stat refetch), and identical snapshots are
+  suppressed by the existing `publish` dedup, so an unchanged roster emits nothing. Menus,
+  Ingame and the not-running states get `None` and stay purely event-driven — **there is no
+  ingame polling**. A tick can't stack with pokes: the rebuild drains the channel as usual.
 - **Static-data cache**: version-keyed JSON files under
   `%LOCALAPPDATA%\valorant-lightweight-tracker\static-cache\static-<version>.json`. Image PNGs
   themselves are passed to the UI as plain valorant-api URLs (not downloaded/cached in Rust).
