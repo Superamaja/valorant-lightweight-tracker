@@ -158,12 +158,6 @@ pub fn extract_pregame(value: Value, own_puuid: &str) -> PregameData {
         teams: Vec::new(),
     });
 
-    let players: Vec<MatchPlayer> = wire
-        .ally_team
-        .as_ref()
-        .map(|t| t.players.iter().cloned().map(|p| p.into_match_player(true)).collect())
-        .unwrap_or_default();
-
     // own_team: AllyTeam.TeamID first, else search Teams for the puuid.
     let own_team = wire
         .ally_team
@@ -176,6 +170,29 @@ pub fn extract_pregame(value: Value, own_puuid: &str) -> PregameData {
                 .find(|team| team.players.iter().any(|p| p.subject == own_puuid))
                 .map(|team| team.team_id.clone())
         });
+
+    // Pregame players carry no per-player TeamID on the wire (that field is coregame-only);
+    // the team id lives on the AllyTeam object. Stamp the derived own_team onto each player
+    // so `is_ally` compares against the same value the snapshot publishes, even when
+    // AllyTeam.TeamID was empty and own_team came from the Teams search. A per-player
+    // TeamID, if Riot ever adds one, still wins.
+    let players: Vec<MatchPlayer> = wire
+        .ally_team
+        .as_ref()
+        .map(|t| {
+            t.players
+                .iter()
+                .cloned()
+                .map(|p| {
+                    let mut player = p.into_match_player(true);
+                    if player.team.is_empty() {
+                        player.team = own_team.clone().unwrap_or_default();
+                    }
+                    player
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     PregameData {
         map_id: none_if_empty(wire.map_id),
@@ -264,6 +281,27 @@ mod tests {
         // locked mate
         assert_eq!(data.players[1].selection_state.as_deref(), Some("locked"));
         assert_eq!(data.players[1].character_id.as_deref(), Some("add6443a-41bd-e414-f6ad-e58d267f4e95"));
+    }
+
+    #[test]
+    fn pregame_players_inherit_ally_team_id_when_absent_on_the_wire() {
+        // The real pregame payload has NO per-player TeamID (coregame-only field); the id
+        // lives on AllyTeam. Regression: every player was getting team "" and rendered as
+        // an enemy. A per-player TeamID, when present, still wins.
+        let payload = json!({
+            "AllyTeam": {
+                "TeamID": "Blue",
+                "Players": [
+                    { "Subject": "me", "CharacterID": "", "CharacterSelectionState": "" },
+                    { "Subject": "mate", "CharacterID": "", "CharacterSelectionState": "",
+                      "TeamID": "Red" }
+                ]
+            }
+        });
+        let data = extract_pregame(payload, "me");
+        assert_eq!(data.own_team.as_deref(), Some("Blue"));
+        assert_eq!(data.players[0].team, "Blue", "wire without TeamID inherits AllyTeam's");
+        assert_eq!(data.players[1].team, "Red", "explicit per-player TeamID wins");
     }
 
     #[test]

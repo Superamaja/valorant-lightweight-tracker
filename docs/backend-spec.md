@@ -415,6 +415,11 @@ could not be verified because Valorant was not running on the build machine (no 
 - **Win rate / match-history**: implemented in phase 2 (see the phase-2 section below). WR
   reuses the phase-1 MMR payload; HS% reuses the competitiveupdates match-id list instead of a
   separate match-history call.
+- **Presence poke classification**: the websocket poke channel carries a `Poke` (`Own` /
+  `Other`) instead of a unit, so pregame reacts to all players' presence events (a teammate
+  locking an agent) while other states only react to our own. §4-A's "ignore other players'
+  presence events" therefore holds everywhere except Pregame. A drained burst collapses to the
+  strongest poke (`Own` wins), and the reconnect re-poll is always an `Own` poke.
 - **Static-data cache**: version-keyed JSON files under
   `%LOCALAPPDATA%\valorant-lightweight-tracker\static-cache\static-<version>.json`. Image PNGs
   themselves are passed to the UI as plain valorant-api URLs (not downloaded/cached in Rust).

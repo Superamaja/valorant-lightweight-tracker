@@ -17,6 +17,7 @@ use crate::riot::remote_api::{build_hosts, Auth, RemoteClient};
 use crate::riot::static_data::{self, StaticData};
 use crate::riot::stats::{self, HitCounts, RrHistory};
 use crate::riot::types::{AppStatus, MapInfo, SessionLoopState, TrackerSnapshot};
+use crate::riot::websocket::Poke;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -49,6 +50,12 @@ impl TrackerState {
     /// Current snapshot (for the `get_tracker_state` command).
     pub fn snapshot(&self) -> TrackerSnapshot {
         self.snapshot.lock().unwrap().clone()
+    }
+
+    /// Currently published status — cheap (no snapshot clone) because the event loop only
+    /// needs it to decide whether another player's presence event is worth a rebuild.
+    fn status(&self) -> AppStatus {
+        self.snapshot.lock().unwrap().status
     }
 
     fn store(&self, snap: TrackerSnapshot) {
@@ -120,19 +127,42 @@ mod debug_capture {
 struct BuildCtx<'a> {
     state: &'a Arc<TrackerState>,
     emitter: &'a Arc<dyn Emitter>,
-    rx: &'a mut mpsc::Receiver<()>,
+    rx: &'a mut mpsc::Receiver<Poke>,
 }
 
-/// Drain the poke channel, returning true if at least one poke was waiting. Used mid-burst:
-/// a poke means a new presence event (possibly a dodge / state transition) arrived, so the
-/// enrichment should abort and let the loop rebuild for the current state rather than block
-/// the transition behind the remaining ~500 KB match-details fetches (HIGH-2).
-fn poke_pending(rx: &mut mpsc::Receiver<()>) -> bool {
-    let mut pending = false;
-    while rx.try_recv().is_ok() {
-        pending = true;
+/// Fold one more poke into the strongest seen so far (`Own` outranks `Other`). Pure — this is
+/// the burst-collapse rule, so a mix of own + other events rebuilds once, as an own poke.
+fn collapse(strongest: Option<Poke>, next: Poke) -> Poke {
+    match strongest {
+        Some(s) if s >= next => s,
+        _ => next,
     }
-    pending
+}
+
+/// A drained poke warrants a rebuild when it is our own presence event (any state — it can
+/// carry a transition), or when it is another player's and we are in agent select, where
+/// their presence is how a teammate's agent pick becomes visible. Pure.
+fn poke_triggers_rebuild(poke: Poke, status: AppStatus) -> bool {
+    poke == Poke::Own || status == AppStatus::Pregame
+}
+
+/// Drain the poke channel, returning the strongest poke that was waiting (`None` if empty).
+fn drain_pokes(rx: &mut mpsc::Receiver<Poke>) -> Option<Poke> {
+    let mut strongest = None;
+    while let Ok(poke) = rx.try_recv() {
+        strongest = Some(collapse(strongest, poke));
+    }
+    strongest
+}
+
+/// Drain the poke channel mid-burst and report whether the enrichment should abort: a new
+/// presence event (possibly a dodge / state transition) means the loop should rebuild for the
+/// current state rather than block it behind the remaining ~500 KB match-details fetches
+/// (HIGH-2). In-match, only our own presence qualifies — another player's is dropped here so
+/// the ingame path never gains a rebuild from it.
+fn abort_pending(rx: &mut mpsc::Receiver<Poke>, ingame: bool) -> bool {
+    let status = if ingame { AppStatus::Ingame } else { AppStatus::Pregame };
+    drain_pokes(rx).is_some_and(|poke| poke_triggers_rebuild(poke, status))
 }
 
 /// Everything needed once connected to a running client.
@@ -330,10 +360,11 @@ async fn refresh_tokens(session: &mut Session) -> Result<()> {
 /// Run a connected session: emit initial state, then react to websocket presence events
 /// until the client is gone (websocket task drops tx, ending the loop).
 async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: &Arc<dyn Emitter>) {
-    // Poke channel: the websocket sends `()` on each own-presence event, and once after
-    // every reconnect so we re-poll presence for any transition missed while the socket
-    // was down (C2). The task ends (dropping tx) only when the client is gone.
-    let (tx, mut rx) = mpsc::channel::<()>(32);
+    // Poke channel: the websocket sends a `Poke` per Valorant presence event (own vs another
+    // player's), and an `Own` poke after every reconnect so we re-poll presence for any
+    // transition missed while the socket was down (C2). The task ends (dropping tx) only when
+    // the client is gone.
+    let (tx, mut rx) = mpsc::channel::<Poke>(32);
     let ws_lockfile = session.lockfile.clone();
     let own = session.own_puuid.clone();
     let ws_state = Arc::clone(state);
@@ -358,7 +389,8 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
                 break;
             }
             // Re-poll after the drop so any transition during the outage is picked up (C2).
-            if tx.send(()).await.is_err() {
+            // Always an `Own` poke: it must rebuild whatever state we are in.
+            if tx.send(Poke::Own).await.is_err() {
                 break; // receiver gone
             }
             tokio::time::sleep(Duration::from_secs(backoff)).await;
@@ -376,19 +408,28 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
             build_and_publish(session, &mut ctx).await
         };
         if interrupted {
-            while rx.try_recv().is_ok() {}
+            drain_pokes(&mut rx);
             continue;
         }
-        match rx.recv().await {
-            Some(()) => {
-                // Collapse a burst of pokes into a single rebuild (L1).
-                while rx.try_recv().is_ok() {}
-            }
-            None => break, // websocket task ended -> client gone
+        if !wait_for_rebuild_poke(&mut rx, state).await {
+            break; // websocket task ended -> client gone
         }
     }
 
     ws_task.abort();
+}
+
+/// Wait for a poke that warrants a rebuild for the currently published status, collapsing
+/// each burst into one (L1). Pokes that don't warrant one (another player's presence outside
+/// agent select) are dropped without any refetch. Returns false when the websocket task ended.
+async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerState) -> bool {
+    while let Some(first) = rx.recv().await {
+        let poke = collapse(drain_pokes(rx), first);
+        if poke_triggers_rebuild(poke, state.status()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Build a snapshot and publish it, routing BadClaims through a token refresh + one retry
@@ -725,7 +766,7 @@ async fn fetch_phase2(
     puuids: &[String],
     ingame: bool,
     match_id: &str,
-    rx: &mut mpsc::Receiver<()>,
+    rx: &mut mpsc::Receiver<Poke>,
 ) -> Result<bool> {
     // Tracks whether any request has been issued yet, so the 120 ms delay only ever sits
     // *between* two real requests across the whole phase.
@@ -738,7 +779,7 @@ async fn fetch_phase2(
         .cloned()
         .collect();
     for puuid in &missing_updates {
-        if poke_pending(rx) {
+        if abort_pending(rx, ingame) {
             return Ok(true);
         }
         if sent_any {
@@ -759,7 +800,7 @@ async fn fetch_phase2(
         if cache.headshots.contains_key(puuid) {
             continue;
         }
-        if poke_pending(rx) {
+        if abort_pending(rx, ingame) {
             return Ok(true);
         }
         let Some(newest) = cache.updates.get(puuid).and_then(|h| h.newest_match_id()) else {
@@ -781,7 +822,7 @@ async fn fetch_phase2(
             .unwrap_or_default();
         let mut acc = HitCounts::default();
         for mid in &match_ids {
-            if poke_pending(rx) {
+            if abort_pending(rx, ingame) {
                 return Ok(true);
             }
             if sent_any {
@@ -801,7 +842,7 @@ async fn fetch_phase2(
 
     // Loadout skins: one request per match, INGAME only.
     if ingame && cache.skins.is_empty() {
-        if poke_pending(rx) {
+        if abort_pending(rx, ingame) {
             return Ok(true);
         }
         match with_rate_limit_retry(|| remote.coregame_loadouts(match_id)).await {
@@ -819,6 +860,60 @@ async fn fetch_phase2(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn burst_collapses_to_the_strongest_poke() {
+        // Own outranks Other in any order, so a mixed burst rebuilds as one own poke.
+        assert_eq!(collapse(None, Poke::Other), Poke::Other);
+        assert_eq!(collapse(None, Poke::Own), Poke::Own);
+        assert_eq!(collapse(Some(Poke::Other), Poke::Own), Poke::Own);
+        assert_eq!(collapse(Some(Poke::Own), Poke::Other), Poke::Own);
+        assert_eq!(collapse(Some(Poke::Other), Poke::Other), Poke::Other);
+    }
+
+    #[test]
+    fn own_pokes_rebuild_in_every_state() {
+        for status in [
+            AppStatus::ValorantNotRunning,
+            AppStatus::Menus,
+            AppStatus::Pregame,
+            AppStatus::Ingame,
+        ] {
+            assert!(poke_triggers_rebuild(Poke::Own, status));
+        }
+    }
+
+    #[test]
+    fn other_pokes_rebuild_only_in_pregame() {
+        // Agent select is the only state where another player's presence changes our table.
+        assert!(poke_triggers_rebuild(Poke::Other, AppStatus::Pregame));
+        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Ingame));
+        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::Menus));
+        assert!(!poke_triggers_rebuild(Poke::Other, AppStatus::ValorantNotRunning));
+    }
+
+    #[test]
+    fn drain_collapses_and_empties_the_channel() {
+        let (tx, mut rx) = mpsc::channel::<Poke>(8);
+        assert_eq!(drain_pokes(&mut rx), None);
+        tx.try_send(Poke::Other).unwrap();
+        tx.try_send(Poke::Own).unwrap();
+        tx.try_send(Poke::Other).unwrap();
+        assert_eq!(drain_pokes(&mut rx), Some(Poke::Own));
+        assert_eq!(drain_pokes(&mut rx), None);
+    }
+
+    #[test]
+    fn enrichment_aborts_on_other_pokes_only_in_pregame() {
+        let (tx, mut rx) = mpsc::channel::<Poke>(8);
+        tx.try_send(Poke::Other).unwrap();
+        assert!(!abort_pending(&mut rx, true), "ingame must ignore other players' pokes");
+        tx.try_send(Poke::Other).unwrap();
+        assert!(abort_pending(&mut rx, false), "pregame rebuilds on an agent lock");
+        tx.try_send(Poke::Other).unwrap();
+        tx.try_send(Poke::Own).unwrap();
+        assert!(abort_pending(&mut rx, true), "own poke still aborts ingame");
+    }
 
     #[test]
     fn empty_cache_is_never_fresh() {

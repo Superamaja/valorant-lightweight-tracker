@@ -42,7 +42,7 @@ export function AgentCell({
       {level !== null && level > 0 && (
         <span
           title={`Account level ${level}`}
-          className="absolute -right-1 -bottom-1 rounded-full bg-black/85 px-1 text-[9px] leading-[13px] font-medium tabular-nums text-neutral-300 ring-1 ring-white/15"
+          className="absolute -right-1 -bottom-1 rounded-full bg-black/85 px-1 text-[10px] leading-[15px] font-medium tabular-nums text-neutral-300 ring-1 ring-white/15"
         >
           {level}
         </span>
