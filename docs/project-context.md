@@ -17,6 +17,7 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
 | Scope v1 | In-match player table only | User request |
 | Discord RPC | Not now, keep architecture open for it later | User request |
 | Tech stack | **DECIDED: Tauri 2 + React + TypeScript + Vite + Tailwind CSS v4** | Small native footprint, good UI story, single-language plumbing behind the Rust backend |
+| License | PolyForm Noncommercial 1.0.0 | User wants the work protected from commercial copying; not OSI open source, advertise as "source-available / free for personal use" |
 
 ## Architecture intent (regardless of stack)
 

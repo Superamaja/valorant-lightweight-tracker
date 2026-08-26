@@ -92,6 +92,13 @@ Games**. VALORANT and Riot Games are trademarks or registered trademarks of Riot
 Games, Inc. It uses Riot's unofficial local client API, which can change at any
 time. **Use at your own risk.**
 
+## License
+
+This project is source-available under the [PolyForm Noncommercial License
+1.0.0](LICENSE.md): free to use, copy, and modify for noncommercial purposes.
+Commercial use is not permitted. See [`LICENSE.md`](LICENSE.md) for the full
+terms.
+
 ## Credits
 
 - [**VALORANT-rank-yoinker**](https://github.com/mdevio/VALORANT-rank-yoinker)
