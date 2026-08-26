@@ -128,15 +128,34 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
   last-match table or once a live snapshot passes 90s without a refresh — a healthy live match
   refreshes itself, so the age is noise.
 
-## Version / updater affordance (2026-08-25)
+## Last match: waiting screen first (2026-08-26)
 
-- The header's right cluster ends with a quiet `v{version}` badge, same weight as the "last
-  updated" text. The version comes from `package.json` through Vite's `define`
-  (`__APP_VERSION__`), so it costs nothing at runtime and works in plain-browser dev too.
-- The badge is also the update control: clicking it runs `checkForUpdates()` from
-  `src/lib/updater.ts`, pulsing while the check is in flight, then showing "Up to date",
-  "Update: v{version}" (dim accent) or "Check failed" for a few seconds before falling back to
-  the version. No popup, no dialog.
+- Leaving a match no longer leaves its table up. On `Menus` the app shows the normal waiting
+  screen, and the held snapshot sits behind a "View last match" button under the subtitle —
+  visible, but not the thing you land on.
+- Pressing it swaps in the held table unchanged: the "Last match" chip, the always-shown
+  snapshot age, all of it. A quiet "← Back" next to the chip returns to the waiting screen.
+- The toggle is a plain `useState` in `App` and resets on any non-`Menus` status, so entering
+  agent select or a match always shows the live table, and the button always opens the newest
+  finished match.
+- How the snapshot is held is unchanged: still the single `seen` ref written after commit, and
+  still only plain `Menus` offers it.
+
+## Version / updater affordance (2026-08-25, reworked 2026-08-26)
+
+- **The version lives on the status screen, not the header.** A quiet `v{version}` line sits
+  under the subtitle of every status screen, same weight as the "last updated" text. The
+  version comes from `package.json` through Vite's `define` (`__APP_VERSION__`), so it costs
+  nothing at runtime and works in plain-browser dev too.
+- That line is also the update control: clicking it runs the check, pulsing while it is in
+  flight, then showing "Up to date", "Update: v{version}" (dim accent) or "Check failed" for a
+  few seconds before falling back to the version. No popup, no dialog.
+- **The header shows nothing in the normal case.** Only once a check has found a newer version
+  does a small accent chip appear in the right cluster reading `Update: v{version}`. Up to
+  date, failed and never-checked all render nothing — the header stays about the match.
+- The last check result is shared state so both places agree: a module-level store in
+  `src/lib/updater.ts` (`runUpdateCheck` / `getUpdateState` / `subscribeUpdateState`), read
+  through `src/hooks/useUpdateState.ts`. No state library; checks are user-triggered only.
 - `checkForUpdates()` is a stub that resolves "up to date" — there is no auto-updater yet (see
   `docs/roadmap.md` for the release pipeline). It is the seam: wiring one up replaces that
   function's body and nothing else.

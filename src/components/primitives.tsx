@@ -77,6 +77,12 @@ export const CopyIcon = () => (
   </svg>
 );
 
+export const ArrowLeftIcon = () => (
+  <svg viewBox="0 0 16 16" className={ICON} aria-hidden="true" {...STROKE}>
+    <path d="M12.75 8H3.25m0 0 3.5-3.5M3.25 8l3.5 3.5" />
+  </svg>
+);
+
 export const CheckIcon = () => (
   <svg viewBox="0 0 16 16" className={ICON} aria-hidden="true" {...STROKE}>
     <path d="m3.25 8.5 3.25 3.25L12.75 4.5" />

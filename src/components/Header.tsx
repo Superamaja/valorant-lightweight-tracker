@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
+import { useUpdateState } from "../hooks/useUpdateState";
 import type { AppStatus, TrackerSnapshot } from "../ipc/types";
 import { clockTime, relativeTime } from "../lib/format";
-import { APP_VERSION, checkForUpdates, type UpdateCheck } from "../lib/updater";
-import { Img } from "./primitives";
+import { ArrowLeftIcon, Img } from "./primitives";
 
 /** The chip doubles as the health indicator: a lit dot means the client is connected. */
 const CHIP: Record<AppStatus, { label: string; dot: string; pulse: boolean }> = {
@@ -44,57 +44,22 @@ function LastUpdated({ at, held }: { at: number; held: boolean }) {
   );
 }
 
-/** How long a finished check's wording stays up before the badge falls back to the version. */
-const RESULT_MS = 4000;
-
-function resultText(check: UpdateCheck): string {
-  switch (check.state) {
-    case "upToDate":
-      return "Up to date";
-    case "available":
-      return `Update: v${check.version}`;
-    case "error":
-      return "Check failed";
-  }
-}
-
-/** The version, doubling as the update control the future auto-updater will report through. */
-function VersionBadge() {
-  const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<UpdateCheck | null>(null);
-
-  useEffect(() => {
-    if (!result) return;
-    const timer = setTimeout(() => setResult(null), RESULT_MS);
-    return () => clearTimeout(timer);
-  }, [result]);
-
-  async function check() {
-    if (checking) return;
-    setChecking(true);
-    setResult(null);
-    try {
-      setResult(await checkForUpdates());
-    } catch {
-      setResult({ state: "error" });
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  const tone = result?.state === "available" ? "text-accent/70" : "text-neutral-600";
+/**
+ * Nothing at all until a check has found a newer version — the version itself lives on the
+ * status screen, so the header only speaks up when there is something to act on.
+ */
+function UpdateBadge() {
+  const { result } = useUpdateState();
+  if (result?.state !== "available") return null;
 
   return (
-    <button
-      type="button"
-      onClick={check}
-      title="Check for updates"
-      className={`text-[10px] tabular-nums ${tone} transition-colors hover:text-neutral-300 ${
-        checking ? "animate-pulse" : ""
-      }`}
+    <span
+      className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[10px] tabular-nums text-accent/80"
+      title="A newer version is available"
     >
-      {result ? resultText(result) : `v${APP_VERSION}`}
-    </button>
+      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+      Update: v{result.version}
+    </span>
   );
 }
 
@@ -105,9 +70,12 @@ function VersionBadge() {
 export function Header({
   snapshot,
   lastMatch = false,
+  onLeaveLastMatch,
 }: {
   snapshot: TrackerSnapshot | null;
   lastMatch?: boolean;
+  /** The way back out of the held table; only meaningful alongside `lastMatch`. */
+  onLeaveLastMatch?: () => void;
 }) {
   const map = snapshot?.map ?? null;
   const chip = lastMatch ? LAST_MATCH : snapshot ? CHIP[snapshot.status] : CONNECTING;
@@ -145,6 +113,17 @@ export function Header({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-3">
+          <UpdateBadge />
+          {lastMatch && onLeaveLastMatch && (
+            <button
+              type="button"
+              onClick={onLeaveLastMatch}
+              className="flex items-center gap-1 text-[10px] tracking-wide text-neutral-500 transition-colors hover:text-neutral-200"
+            >
+              <ArrowLeftIcon />
+              Back
+            </button>
+          )}
           <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[10px] tracking-wide text-neutral-300">
             <span
               className={`h-1.5 w-1.5 rounded-full ${chip.dot} ${chip.pulse ? "animate-pulse" : ""}`}
@@ -152,7 +131,6 @@ export function Header({
             {chip.label}
           </span>
           {snapshot && <LastUpdated at={snapshot.lastUpdated} held={lastMatch} />}
-          <VersionBadge />
         </div>
       </div>
     </header>

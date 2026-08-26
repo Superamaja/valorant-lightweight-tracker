@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { PlayerTable } from "./components/PlayerTable";
 import { StatusScreen } from "./components/StatusScreen";
@@ -7,12 +7,14 @@ import type { TrackerSnapshot } from "./ipc/types";
 
 /**
  * Status drives the whole layout — the table only exists inside a match, except in `Menus`,
- * where `lastMatch` (the match we just left, if any) keeps its table on screen.
+ * where the match we just left is one click away behind the waiting screen.
  */
 function screen(
   snapshot: TrackerSnapshot | null,
   error: string | null,
-  lastMatch: TrackerSnapshot | null,
+  held: TrackerSnapshot | null,
+  showHeld: boolean,
+  onShowHeld: () => void,
 ) {
   if (error) {
     return <StatusScreen tone="error" title="The tracker stopped" subtitle={error} />;
@@ -33,8 +35,8 @@ function screen(
         />
       );
     case "Menus":
-      return lastMatch ? (
-        <PlayerTable snapshot={lastMatch} />
+      return showHeld && held ? (
+        <PlayerTable snapshot={held} />
       ) : (
         <StatusScreen
           tone="live"
@@ -42,6 +44,7 @@ function screen(
           subtitle={
             snapshot.message ?? "Connected. The table fills in the moment agent select opens."
           }
+          action={held ? { label: "View last match", onClick: onShowHeld } : null}
         />
       );
     default:
@@ -60,18 +63,34 @@ export default function App() {
   // A ref written after commit (render must stay pure); by the time a `Menus` snapshot
   // renders, the previous match's committed snapshot is already in it.
   const seen = useRef<TrackerSnapshot | null>(null);
+  // Menus opens on the waiting screen; the held table is opt-in and closes again when the
+  // next match starts, so a new game never lands on stale rows.
+  const [showHeld, setShowHeld] = useState(false);
+
   useEffect(() => {
-    if (snapshot && snapshot.players.length > 0) {
+    if (!snapshot) return;
+    if (snapshot.players.length > 0) {
       seen.current = snapshot;
     }
+    if (snapshot.status !== "Menus") {
+      setShowHeld(false);
+    }
   }, [snapshot]);
+
   // Only plain `Menus` holds it — not running, error and startup keep their status screens.
-  const lastMatch = snapshot?.status === "Menus" ? seen.current : null;
+  const held = snapshot?.status === "Menus" ? seen.current : null;
+  const viewingHeld = showHeld && held !== null;
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base text-neutral-200 select-none">
-      <Header snapshot={lastMatch ?? snapshot} lastMatch={lastMatch !== null} />
-      <main className="min-h-0 flex-1 overflow-auto">{screen(snapshot, error, lastMatch)}</main>
+      <Header
+        snapshot={viewingHeld ? held : snapshot}
+        lastMatch={viewingHeld}
+        onLeaveLastMatch={() => setShowHeld(false)}
+      />
+      <main className="min-h-0 flex-1 overflow-auto">
+        {screen(snapshot, error, held, showHeld, () => setShowHeld(true))}
+      </main>
     </div>
   );
 }
