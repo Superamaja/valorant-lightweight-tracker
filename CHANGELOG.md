@@ -3,6 +3,13 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## v0.1.1 - 2026-08-26
+
+- Improved the release tooling behind the scenes. The app itself works the same
+  as v0.1.0.
+- First release delivered through the built-in updater: if you are on v0.1.0,
+  the app should offer this update on its own.
+
 ## v0.1.0 - 2026-08-26
 
 - Added the in-match player table: everyone in your game with their current rank,

@@ -65,7 +65,7 @@ Standard flow:
 
    ```sh
    git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock CHANGELOG.md
-   git commit -m "Release v0.2.0"
+   git commit -m "chore(release): v0.2.0"
    ```
 
 3. **Tag** with a matching `vX.Y.Z` tag (the workflow rejects any other shape):
