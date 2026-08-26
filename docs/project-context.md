@@ -198,8 +198,9 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    (checkout@v7, setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3), both assets
    attached (exe 11.5 MB + `.sha256`). The `CHANGELOG.md` gate ran for real for the first
    time and passed; the v0.1.1 section became the Release description.
-   - **Swap test now unblocked, not yet performed**: the user must launch their v0.1.0 exe
-     and install the offered update.
+   - **Swap test verified 2026-08-26**: the user launched their v0.1.0 exe, it offered
+     v0.1.1, installed via the header chip, swapped and relaunched cleanly (running
+     instance restarted as v0.1.1).
    - Open verification items unchanged from item 12 + the two-lane fetch and presence
      grace next time the user plays with a debug build.
 11. **Session todo list (2026-08-26, remaining):**
