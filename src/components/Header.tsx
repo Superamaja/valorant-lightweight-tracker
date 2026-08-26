@@ -47,15 +47,11 @@ function LastUpdated({ at, held }: { at: number; held: boolean }) {
 
 /**
  * Nothing at all until a check has found a newer version — the version itself lives on the
- * status screen, so the header only speaks up when there is something to act on. The one
- * check of the session runs from here; clicking installs and restarts.
+ * status screen, so the header only speaks up when there is something to act on. Clicking
+ * installs and restarts.
  */
 function UpdateBadge() {
   const { result, installing, installError } = useUpdateState();
-
-  useEffect(() => {
-    void runUpdateCheck();
-  }, []);
 
   if (result?.state !== "available") return null;
 
@@ -91,15 +87,23 @@ export function Header({
   snapshot,
   lastMatch = false,
   onLeaveLastMatch,
+  showUpdate = false,
 }: {
   snapshot: TrackerSnapshot | null;
   lastMatch?: boolean;
   /** The way back out of the held table; only meaningful alongside `lastMatch`. */
   onLeaveLastMatch?: () => void;
+  /** Off while a status screen is up: that screen makes the offer itself, in full. */
+  showUpdate?: boolean;
 }) {
   const map = snapshot?.map ?? null;
   const chip = lastMatch ? LAST_MATCH : snapshot ? CHIP[snapshot.status] : CONNECTING;
   const mode = snapshot?.mode ?? null;
+
+  // The header outlives every screen, so the one check of the session belongs here.
+  useEffect(() => {
+    void runUpdateCheck();
+  }, []);
 
   return (
     <header className="relative shrink-0 overflow-hidden border-b border-edge">
@@ -133,7 +137,7 @@ export function Header({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-3">
-          <UpdateBadge />
+          {showUpdate && <UpdateBadge />}
           {lastMatch && onLeaveLastMatch && (
             <button
               type="button"

@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { useUpdateState } from "../hooks/useUpdateState";
-import { APP_VERSION, runUpdateCheck, type UpdateCheck } from "../lib/updater";
+import {
+  APP_VERSION,
+  runUpdateCheck,
+  runUpdateInstall,
+  type UpdateCheck,
+} from "../lib/updater";
 
 export type Tone = "idle" | "live" | "error";
 
@@ -20,15 +25,46 @@ const TONES: Record<Tone, { dot: string; ring: string; glow: string; pulsing: bo
 /** How long a finished check's wording stays up before the line falls back to the version. */
 const RESULT_MS = 4000;
 
-function resultText(check: UpdateCheck): string {
+function resultText(check: Exclude<UpdateCheck, { state: "available" }>): string {
   switch (check.state) {
     case "upToDate":
       return "Up to date";
-    case "available":
-      return `Update: v${check.version}`;
     case "error":
       return "Check failed";
   }
+}
+
+/**
+ * The offer itself, once a check has found a newer version: the loudest thing on the screen,
+ * because the screen it sits on is one the user is already waiting through. Clicking installs
+ * and restarts.
+ */
+function UpdateCallToAction() {
+  const { result, installing, installError } = useUpdateState();
+
+  if (result?.state !== "available") return null;
+
+  const label = installing
+    ? "Updating"
+    : `${installError ? "Retry update to" : "Update to"} v${result.version}`;
+
+  return (
+    <button
+      type="button"
+      onClick={runUpdateInstall}
+      disabled={installing}
+      title={
+        installing
+          ? "Downloading the update"
+          : (installError ?? "Install it and restart")
+      }
+      className={`mt-5 rounded-full bg-accent px-5 py-2.5 text-[13px] font-medium text-white shadow-[0_0_24px_-4px] shadow-accent/50 transition-opacity hover:opacity-90 ${
+        installing ? "animate-pulse" : ""
+      }`}
+    >
+      {label}
+    </button>
+  );
 }
 
 /** The version, doubling as the update control the auto-updater reports through. */
@@ -43,9 +79,8 @@ function VersionLine() {
     return () => clearTimeout(timer);
   }, [result]);
 
-  // A failed install stays up: unlike a check's answer, it is something to act on.
-  const shown = showResult && !installError ? result : null;
-  const tone = shown?.state === "available" ? "text-accent/70" : "text-neutral-600";
+  // An available update has the call to action above; the line stays out of its way.
+  const shown = showResult && result?.state !== "available" ? result : null;
   const busy = checking || installing;
 
   return (
@@ -54,15 +89,11 @@ function VersionLine() {
       onClick={runUpdateCheck}
       disabled={busy}
       title={installError ?? "Check for updates"}
-      className={`mt-6 text-[10px] tabular-nums ${tone} transition-colors hover:text-neutral-300 ${
+      className={`mt-6 text-[10px] tabular-nums text-neutral-600 transition-colors hover:text-neutral-300 ${
         busy ? "animate-pulse" : ""
       }`}
     >
-      {installError
-        ? "Update failed"
-        : shown
-          ? resultText(shown)
-          : `v${APP_VERSION}`}
+      {shown ? resultText(shown) : `v${APP_VERSION}`}
     </button>
   );
 }
@@ -117,6 +148,7 @@ export function StatusScreen({
             {action.label}
           </button>
         )}
+        <UpdateCallToAction />
         <VersionLine />
       </div>
     </div>

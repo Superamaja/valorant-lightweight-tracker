@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Header } from "./components/Header";
 import { PlayerTable } from "./components/PlayerTable";
 import { StatusScreen } from "./components/StatusScreen";
 import { useTracker } from "./hooks/useTracker";
 import type { TrackerSnapshot } from "./ipc/types";
+
+interface Screen {
+  content: ReactNode;
+  /** Rows rather than a status screen — the header only speaks up over a table. */
+  table: boolean;
+}
+
+const table = (content: ReactNode): Screen => ({ content, table: true });
+const status = (content: ReactNode): Screen => ({ content, table: false });
 
 /**
  * Status drives the whole layout — the table only exists inside a match, except in `Menus`,
@@ -15,44 +24,44 @@ function screen(
   held: TrackerSnapshot | null,
   showHeld: boolean,
   onShowHeld: () => void,
-) {
+): Screen {
   if (error) {
-    return <StatusScreen tone="error" title="The tracker stopped" subtitle={error} />;
+    return status(<StatusScreen tone="error" title="The tracker stopped" subtitle={error} />);
   }
   if (!snapshot) {
-    return (
-      <StatusScreen tone="live" title="Starting" subtitle="Looking for the Valorant client." />
+    return status(
+      <StatusScreen tone="live" title="Starting" subtitle="Looking for the Valorant client." />,
     );
   }
 
   switch (snapshot.status) {
     case "ValorantNotRunning":
-      return (
+      return status(
         <StatusScreen
           tone="idle"
           title="Waiting for VALORANT"
           subtitle={snapshot.message ?? "Start the game — the tracker connects on its own."}
-        />
+        />,
       );
     case "Menus":
-      return showHeld && held ? (
-        <PlayerTable snapshot={held} />
-      ) : (
-        <StatusScreen
-          tone="live"
-          title="Waiting for a match"
-          subtitle={
-            snapshot.message ?? "Connected. The table fills in the moment agent select opens."
-          }
-          action={held ? { label: "View last match", onClick: onShowHeld } : null}
-        />
-      );
+      return showHeld && held
+        ? table(<PlayerTable snapshot={held} />)
+        : status(
+            <StatusScreen
+              tone="live"
+              title="Waiting for a match"
+              subtitle={
+                snapshot.message ?? "Connected. The table fills in the moment agent select opens."
+              }
+              action={held ? { label: "View last match", onClick: onShowHeld } : null}
+            />,
+          );
     default:
-      return snapshot.players.length > 0 ? (
-        <PlayerTable snapshot={snapshot} />
-      ) : (
-        <StatusScreen tone="live" title="Loading the lobby" subtitle={snapshot.message} />
-      );
+      return snapshot.players.length > 0
+        ? table(<PlayerTable snapshot={snapshot} />)
+        : status(
+            <StatusScreen tone="live" title="Loading the lobby" subtitle={snapshot.message} />,
+          );
   }
 }
 
@@ -80,6 +89,7 @@ export default function App() {
   // Only plain `Menus` holds it — not running, error and startup keep their status screens.
   const held = snapshot?.status === "Menus" ? seen.current : null;
   const viewingHeld = showHeld && held !== null;
+  const main = screen(snapshot, error, held, showHeld, () => setShowHeld(true));
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base text-neutral-200 select-none">
@@ -87,10 +97,9 @@ export default function App() {
         snapshot={viewingHeld ? held : snapshot}
         lastMatch={viewingHeld}
         onLeaveLastMatch={() => setShowHeld(false)}
+        showUpdate={main.table}
       />
-      <main className="min-h-0 flex-1 overflow-auto">
-        {screen(snapshot, error, held, showHeld, () => setShowHeld(true))}
-      </main>
+      <main className="min-h-0 flex-1 overflow-auto">{main.content}</main>
     </div>
   );
 }

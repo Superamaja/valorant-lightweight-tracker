@@ -147,18 +147,23 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
   under the subtitle of every status screen, same weight as the "last updated" text. The
   version comes from `package.json` through Vite's `define` (`__APP_VERSION__`), so it costs
   nothing at runtime and works in plain-browser dev too.
-- That line is also the update control: clicking it runs the check, pulsing while it is in
-  flight, then showing "Up to date", "Update: v{version}" (dim accent) or "Check failed" for a
-  few seconds before falling back to the version. No popup, no dialog.
-- **The header shows nothing in the normal case.** Only once a check has found a newer version
-  does a small accent chip appear in the right cluster reading `Update: v{version}`. Up to
-  date, failed and never-checked all render nothing — the header stays about the match.
-- The last check result is shared state so both places agree: a module-level store in
-  `src/lib/updater.ts` (`runUpdateCheck` / `getUpdateState` / `subscribeUpdateState`), read
-  through `src/hooks/useUpdateState.ts`. No state library; checks are user-triggered only.
-- `checkForUpdates()` is a stub that resolves "up to date" — there is no auto-updater yet (see
-  `docs/roadmap.md` for the release pipeline). It is the seam: wiring one up replaces that
-  function's body and nothing else.
+- That line is also the manual check control: clicking it re-runs the check, pulsing while it
+  is in flight, then showing "Up to date" or "Check failed" for a few seconds before falling
+  back to the version. No popup, no dialog. (One automatic check also runs at app start, from
+  the always-mounted header.)
+- **An available update owns exactly one affordance per screen** (2026-08-26): on any status
+  screen it is a prominent solid-accent CTA button under the subtitle — `Update to v{version}`,
+  disabled + pulsing as `Updating` while installing, `Retry update to v{version}` after a
+  failed install (error text in the tooltip). The version line then just shows the plain
+  version, no accent flash. Over a match table (live or held) the affordance is instead the
+  small header accent chip `Update: v{version}` — `App` passes `showUpdate` (does the main
+  area show a table?) to `Header`, so chip and CTA never render together. Up to date, failed
+  and never-checked render nothing in the header — it stays about the match.
+- Check and install state is shared so every surface agrees: a module-level store in
+  `src/lib/updater.ts` (`runUpdateCheck` / `runUpdateInstall` / `subscribeUpdateState`), read
+  through `src/hooks/useUpdateState.ts`. No state library. Both surfaces call the real
+  backend commands (`check_update` / `apply_update`, see `docs/ipc-contract.md`); clicking
+  install downloads, swaps and restarts the app.
 
 ## Open items
 
