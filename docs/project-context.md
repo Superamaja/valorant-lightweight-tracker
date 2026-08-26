@@ -195,8 +195,8 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    - **Next release (v0.1.1+) is the auto-updater's first end-to-end test** — the swap
      path has never run against a real newer release. Flow: CHANGELOG.md entry ->
      `pnpm bump patch` -> commit -> tag -> push.
-   - Workflow actions target deprecated Node 20 (checkout@v4, setup-node@v4,
-     pnpm/action-setup@v4, action-gh-release@v2) — bump majors when convenient.
+   - ~~Workflow actions target deprecated Node 20~~ — bumped 2026-08-26 to checkout@v7,
+     setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3 (Codex-reviewed clean).
    - Open verification items unchanged from item 12 + the two-lane fetch and presence
      grace next time the user plays with a debug build.
 11. **Session todo list (2026-08-26, remaining):**
