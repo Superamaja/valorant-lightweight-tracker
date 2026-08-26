@@ -83,6 +83,18 @@ Lines carry truncated puuids and match ids, never full ones: an id keeps its fir
 characters, and in a request path the query string is dropped. Map/mode and the client
 version are real. `cargo build --release` compiles the whole thing out, arguments included.
 
+### Standalone debug exe
+
+```powershell
+pnpm tauri build --debug --no-bundle
+```
+
+builds `src-tauri/target/debug/valorant-lightweight-tracker.exe`: a debug-profile build with
+the release-shaped frontend baked in (real CSP, no Vite dev server) but all three affordances
+above still compiled in, plus devtools (Ctrl+Shift+I). Run it from a terminal to get the live
+console log without `pnpm tauri dev`; it is also the artifact for the release-shaped CSP smoke
+test (see roadmap).
+
 ## Git
 
 `/public/debug-snapshot.json`, `/debug/` and `/src-tauri/debug/` are gitignored, so both the
