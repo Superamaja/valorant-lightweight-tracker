@@ -32,9 +32,8 @@ For every player in your match:
 - **Agent picks live during agent select**, updating as teammates pick and lock.
 - **Account level badges**, with hidden levels and incognito names respected:
   the tracker shows what Riot allows and never de-anonymizes anyone.
-- **Party indicators** for premade groups it can detect.
-- The table sticks around after the match ends, so you can screenshot or review
-  the lobby from the menus.
+- **Click any player's name** to open their tracker.gg profile in your browser
+  for the full match history; right-click copies their Riot id.
 
 Everything streams in automatically: launch it once and it follows you from
 menus to agent select to the match, reconnecting on its own if the game
