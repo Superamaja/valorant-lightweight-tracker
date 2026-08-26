@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AppStatus, TrackerSnapshot } from "../ipc/types";
 import { clockTime, relativeTime } from "../lib/format";
+import { APP_VERSION, checkForUpdates, type UpdateCheck } from "../lib/updater";
 import { Img } from "./primitives";
 
 /** The chip doubles as the health indicator: a lit dot means the client is connected. */
@@ -31,6 +32,60 @@ function LastUpdated({ at }: { at: number }) {
     >
       {relativeTime(at)}
     </span>
+  );
+}
+
+/** How long a finished check's wording stays up before the badge falls back to the version. */
+const RESULT_MS = 4000;
+
+function resultText(check: UpdateCheck): string {
+  switch (check.state) {
+    case "upToDate":
+      return "Up to date";
+    case "available":
+      return `Update: v${check.version}`;
+    case "error":
+      return "Check failed";
+  }
+}
+
+/** The version, doubling as the update control the future auto-updater will report through. */
+function VersionBadge() {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<UpdateCheck | null>(null);
+
+  useEffect(() => {
+    if (!result) return;
+    const timer = setTimeout(() => setResult(null), RESULT_MS);
+    return () => clearTimeout(timer);
+  }, [result]);
+
+  async function check() {
+    if (checking) return;
+    setChecking(true);
+    setResult(null);
+    try {
+      setResult(await checkForUpdates());
+    } catch {
+      setResult({ state: "error" });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const tone = result?.state === "available" ? "text-accent/70" : "text-neutral-600";
+
+  return (
+    <button
+      type="button"
+      onClick={check}
+      title="Check for updates"
+      className={`text-[10px] tabular-nums ${tone} transition-colors hover:text-neutral-300 ${
+        checking ? "animate-pulse" : ""
+      }`}
+    >
+      {result ? resultText(result) : `v${APP_VERSION}`}
+    </button>
   );
 }
 
@@ -88,6 +143,7 @@ export function Header({
             {chip.label}
           </span>
           {snapshot && <LastUpdated at={snapshot.lastUpdated} />}
+          <VersionBadge />
         </div>
       </div>
     </header>
