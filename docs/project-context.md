@@ -104,48 +104,34 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    "all 5 **locked**" is a safe stop condition ("selected" is not), and the own-presence
    websocket poke catches pregame→ingame independently of the tick — not yet implemented,
    see the todo list below.
-11. **Session todo list (2026-08-26, not yet implemented):**
-   - **[PRIORITY 1] UI polish batch** (user-approved subset of the 2026-08-26 Opus UI
-     review; rejected findings are NOT to be revisited):
-     - Row plate: end the team-tint gradient at a faint constant instead of transparent so
-       rows keep definition across the stat cluster. **User undecided — implement behind an
-       easy toggle/screenshot pass and show before/after first.**
-     - Move Vandal/Phantom columns to the end (after ΔRR). Skin art keeps normal opacity
-       (user rejected the 80% dim).
-     - Rank icon larger, peak icon one step smaller (stays full-color). Agent portrait
-       stays 40px (user: current size is good).
-     - `YOU` badge becomes yellow. Enemy red stays exactly as-is (user likes it).
-     - Hide the "Xm ago" age while live/in-match; show only for held last-match tables or
-       genuine staleness. (The "7h ago next to In match" capture was a JSON replay artifact.)
-     - Unranked: icon alone, drop the stray em-dash.
-     - Party indicator: small vertical bar rail instead of the 6px dot (still pending a
-       live party capture to verify colors at all).
-     - Rejected by user (do not implement): pip opacity/half-height rework (#4), numeric
-       right-alignment (#7 — user disputes the finding), empty-cell dash unification (#9 —
-       user disputes), last-match table dimming (#11), self-row ring removal (#12), outlier
-       stat weighting (#13).
+11a. ~~**Todo execution 2026-08-26.**~~ **Done, all Codex-reviewed, committed per change:**
+   the UI polish batch (skin columns after ΔRR; rank h-8 / peak h-6; amber `YOU`; age hidden
+   while live; unranked icon without dash; party bar instead of dot; row plate settled at
+   `to-white/[0.025]` after a live A/B — 0.015 was invisible, 0.04 too loud; toggle kept in
+   `src/lib/table.ts`). One review finding triaged out (NaN age guard — dev-only input,
+   pre-existing behavior). The pregame backend batch (tick pauses once the roster is fully
+   locked — one high review finding fixed: the flag is now cleared at the start of every
+   rebuild so failure paths keep the recovery tick; pregame match id cached, steady-state
+   tick 2 → 1 request/s; 404 immediate-retry dedup; backend-spec corrected to "remote glz").
+   The Retake fix (`fortcollins` → "Retake"; unknown queue ids now title-cased + dev-logged
+   instead of leaking raw). vRY cross-check skipped (user: no recent upstream commits).
+   Screenshot workflow note: browser A/B captures should be taken at the app's real
+   1000×700 (constrain the page and capture that region; the Chrome window resize tool
+   can silently fail on a maximized window).
+11. **Session todo list (2026-08-26, remaining):**
    - **Version/update UI redesign** — user dislikes the current header `v0.1.0` text next to
      "6m ago"; rework `VersionBadge` presentation and decide the future update-available look
      (auto-updater seam). Options from the UI review: (A) move version to the status screen,
      (B) icon-only header glyph expanding on update-available, (C) divider+dim. **User still
      undecided — do not implement until they pick.**
-   - **Pregame poll: stop after all 5 allies locked** (safe per investigation above).
-     Footnote from the 2026-08-26 log analysis: while touching this code, also suppress the
-     duplicated immediate 404 retry inside each transition backoff cycle (saves ~6 requests
-     per pregame→ingame race; too small to stand alone).
-   - **Pregame poll: cache the match id** — it can't change mid-pregame; halves poll cost.
-     Log-quantified 2026-08-26: pregame ticks were 90 of 297 requests (30%) in a real run
-     (`~/Downloads/log.txt`, keep as before/after benchmark).
-   - **Unknown queue id leaks raw into the UI** — a real run showed `mode=fortcollins`
-     (`game_mode_name` in `src-tauri/src/riot/constants.rs` falls through to the raw queue
-     id, and that string reaches the UI). Add the mapping or a friendlier fallback.
    - **Bounded-concurrency match-details fetches** — enrichment fetches match details
      sequentially with a 120ms delay each; the first 45-call burst took 23s wall-clock.
      Two in flight (keeping the 429 gate) could roughly halve initial enrichment time.
      **Gated on** first live-verifying the comp-match rate-limit burst (open item below) —
      the sequential pacing is deliberate 429 caution and no run has exercised a 429 yet.
-   - **Doc fix**: `docs/backend-spec.md` "Pregame poll tick" section says "one local pregame
-     GET per second"; actually two remote GLZ requests.
+   - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
+     numeric right-alignment, empty-cell dash unification, last-match table dimming,
+     self-row ring removal, outlier stat weighting.
 12. **Open items for later sessions** (user finishes the roadmap there):
    - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
      browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
