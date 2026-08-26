@@ -73,12 +73,15 @@ Decisions taken while building, beyond the baseline above:
   with an X), at both the skin and the level-1 icon, so there is no image to prefer.
 - **Tooltips are native `title` attributes.** Zero JS, zero dependencies, and it is what
   "rank names are tooltips only" needs.
-- **"Still loading" is inferred, not flagged.** The IPC contract has no field saying a
-  snapshot is the fast one, and an absent heavy stat is identical to "player has no data", so
-  the UI treats a snapshot where *no* row has any heavy stat as still loading and shows
-  skeletons; after that an absent value renders "N/A". A lobby where nobody has ever played a
-  competitive match would sit on skeletons — accepted, it is not reachable in practice.
-- **Win rate never shows a skeleton** — it ships with the fast snapshot.
+- **Skeletons are per cell, driven by `PlayerRow.pending`.** Each cell shows a skeleton iff
+  its group's flag is true, and renders "N/A" the moment the flag clears, so the table fills
+  in a group at a time as the backend publishes its progress snapshots. Rank, peak, WR and the
+  name can all skeleton now: they wait on the MMR and name payloads like every other stat, and
+  a placeholder Unranked (or "Unknown player") before those land would be a wrong answer
+  rather than a missing one. Read the flags through `pendingOf(player)` — snapshots captured
+  before the field existed must read as settled, not as an all-skeleton table.
+- **`TableLayout.loading` is gone**, and nothing keys off `snapshot.enriched`: it is a
+  whole-snapshot summary, not a per-cell gate.
 - **Column order** extends the baseline row for the phase-2 columns: agent · name · Vandal ·
   Phantom · rank+RR · peak · HS% · WR · last-5 pips · ΔRR · level (skins sit between name and
   rank; level moved to the end).
@@ -90,7 +93,8 @@ Decisions taken while building, beyond the baseline above:
 
 Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted above):
 
-1. No way to tell a fast snapshot from an enriched one — inferred as described.
+1. ~~No way to tell a fast snapshot from an enriched one — inferred as described.~~ Resolved:
+   `PlayerRow.pending` carries per-group loading state (2026-08-25).
 2. `accountLevel` for incognito players: the contract says withheld, `assemble.rs` withholds
    only on `hide_account_level`. UI hides it.
 3. `agentSelectionState` is documented as `"locked" | "selected" | null` but is Riot's raw
@@ -100,13 +104,26 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
 
 - **Level column removed.** Level renders as a small badge on the agent portrait (corner) instead. Level `null` OR `0` = hidden: show nothing (0 is Riot's "hidden" wire value; backend nulls it).
 - **Peak rank cell un-dimmed**: same icon size and full color as the current-rank icon, plus the peak's episode/act short label next to it, formatted capitalized with colon+space: `E6: A3` / `V26: A1`. Backend exposes the label pre-formatted (new contract field).
-- **HS% scope labeled**: header/tooltip says it covers the last 3 competitive matches (backend constant; changeable).
+- **HS% scope labeled**: header/tooltip says it covers the last 5 competitive matches (backend constant; changeable).
 - **Rows slightly thicker** so the agent portrait can be larger and carry the level badge.
 - Sizing must be verified against an emulated 10-player lobby at 1000x700 (no horizontal overflow, no scrolling), fixture removed after.
+
+## Version / updater affordance (2026-08-25)
+
+- The header's right cluster ends with a quiet `v{version}` badge, same weight as the "last
+  updated" text. The version comes from `package.json` through Vite's `define`
+  (`__APP_VERSION__`), so it costs nothing at runtime and works in plain-browser dev too.
+- The badge is also the update control: clicking it runs `checkForUpdates()` from
+  `src/lib/updater.ts`, pulsing while the check is in flight, then showing "Up to date",
+  "Update: v{version}" (dim accent) or "Check failed" for a few seconds before falling back to
+  the version. No popup, no dialog.
+- `checkForUpdates()` is a stub that resolves "up to date" — there is no auto-updater yet (see
+  `docs/roadmap.md` for the release pipeline). It is the seam: wiring one up replaces that
+  function's body and nothing else.
 
 ## Open items
 
 - User may still provide reference images; revisit style section when they do.
 - Score display in header: later, once backend exposes it.
-- Not yet seen against a live match: party dot colours, the fast -> enriched hand-off, real
-  skin art, and a full ten-row lobby in the real window.
+- Not yet seen against a live match: party dot colours, the incremental fill-in, real skin
+  art, and a full ten-row lobby in the real window.

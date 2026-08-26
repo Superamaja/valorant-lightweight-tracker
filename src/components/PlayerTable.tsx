@@ -31,7 +31,6 @@ export function PlayerTable({ snapshot }: { snapshot: TrackerSnapshot }) {
   const layout: TableLayout = {
     template: gridTemplate(withSkins),
     withSkins,
-    loading: !snapshot.enriched,
     parties: partyGroups(snapshot.players),
   };
 

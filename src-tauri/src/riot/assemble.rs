@@ -8,7 +8,7 @@ use crate::riot::match_state::MatchPlayer;
 use crate::riot::rank::{self, MmrResponse};
 use crate::riot::static_data::StaticData;
 use crate::riot::stats::{RecentStats, RrHistory};
-use crate::riot::types::PlayerRow;
+use crate::riot::types::{PendingStats, PlayerRow};
 use std::collections::HashMap;
 
 /// All the resolved inputs needed to build the table.
@@ -32,6 +32,14 @@ pub struct AssembleInput<'a> {
     pub current_season_id: &'a str,
     /// Content-service season list, used to label the act a peak rank was achieved in.
     pub seasons: &'a [Season],
+    /// Whether this build is the settled one for the match. A settled build carries no
+    /// pending flags: an absent value is then genuinely absent, not still in flight.
+    pub finality: bool,
+    /// Whether the match's loadouts have settled. Loadouts arrive for the whole roster at
+    /// once, so this is per-match, not per-row.
+    pub loadouts_fetched: bool,
+    /// Whether the match is INGAME — the only state where loadouts exist at all.
+    pub ingame: bool,
 }
 
 /// Build the player rows. Applies incognito/level privacy rules, rank + phase-2 stat
@@ -71,8 +79,10 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
             let mmr = input.mmr.get(&p.puuid).unwrap_or(&default_mmr);
             let current = rank::compute_current(mmr, input.current_season_id);
             let peak = rank::compute_peak(mmr, current.tier, input.seasons);
-            let peak_rank_act =
-                peak.season_id.as_deref().and_then(|id| content::act_label(input.seasons, id));
+            // A peak that fell back to the current tier carries no season of its own; it was
+            // reached in the act being played, so label it with that one.
+            let peak_season = peak.season_id.as_deref().unwrap_or(input.current_season_id);
+            let peak_rank_act = content::act_label(input.seasons, peak_season);
             let win_rate = rank::compute_win_rate(mmr, input.current_season_id);
 
             // ΔRR + last-5 pips.
@@ -86,10 +96,26 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
 
             // Skins (INGAME only; resolved uuid -> name/icon via static data).
             let player_skins = input.skins.get(&p.puuid);
-            let vandal_skin =
-                player_skins.and_then(|s| input.static_data.skin(s.vandal.as_deref()));
-            let phantom_skin =
-                player_skins.and_then(|s| input.static_data.skin(s.phantom.as_deref()));
+            let vandal_skin = player_skins.and_then(|s| {
+                input
+                    .static_data
+                    .skin(s.vandal.skin.as_deref(), s.vandal.chroma.as_deref())
+            });
+            let phantom_skin = player_skins.and_then(|s| {
+                input
+                    .static_data
+                    .skin(s.phantom.skin.as_deref(), s.phantom.chroma.as_deref())
+            });
+
+            // A group is in flight while the data it is built from has not reached the cache,
+            // up until the build that settles the match.
+            let pending = PendingStats {
+                name: !input.finality && !input.names.contains_key(&p.puuid),
+                rank: !input.finality && !input.mmr.contains_key(&p.puuid),
+                history: !input.finality && !input.updates.contains_key(&p.puuid),
+                recent_stats: !input.finality && !input.recent_stats.contains_key(&p.puuid),
+                skins: !input.finality && input.ingame && !input.loadouts_fetched,
+            };
 
             PlayerRow {
                 id: p.puuid.clone(),
@@ -114,6 +140,7 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 kd: recent.kd,
                 vandal_skin,
                 phantom_skin,
+                pending,
             }
         })
         .collect();
@@ -152,7 +179,7 @@ fn order_rows(rows: &mut [PlayerRow]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::riot::loadout::PlayerSkinIds;
+    use crate::riot::loadout::{EquippedSkin, PlayerSkinIds};
     use crate::riot::rank::parse_mmr;
     use serde_json::json;
 
@@ -185,6 +212,9 @@ mod tests {
         static_data: StaticData,
         own_team: Option<String>,
         seasons: Vec<Season>,
+        finality: bool,
+        loadouts_fetched: bool,
+        ingame: bool,
     }
 
     impl Case {
@@ -202,6 +232,9 @@ mod tests {
                 own_team: self.own_team.as_deref(),
                 current_season_id: "s1",
                 seasons: &self.seasons,
+                finality: self.finality,
+                loadouts_fetched: self.loadouts_fetched,
+                ingame: self.ingame,
             })
         }
     }
@@ -316,8 +349,21 @@ mod tests {
     }
 
     #[test]
-    fn peak_act_is_null_without_a_peak_season() {
-        // Peak == current tier, so no season is attributed to it.
+    fn peak_act_falls_back_to_the_current_act() {
+        // Peak == current tier (no wins data), so the peak belongs to the act being played.
+        let players = vec![base_player("me", "Blue")];
+        let seasons = crate::riot::content::parse_seasons(&json!({ "Seasons": [
+            { "ID": "e7", "Name": "EPISODE 7", "Type": "episode" },
+            { "ID": "s1", "Name": "ACT I", "Type": "act", "IsActive": true }
+        ]}));
+        let case = Case { seasons, own_team: Some("Blue".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        assert_eq!(row(&rows, "me").peak_rank_act.as_deref(), Some("E7: A1"));
+    }
+
+    #[test]
+    fn peak_act_is_null_when_no_season_resolves() {
+        // Nothing to label the peak with when the season list can't place the act.
         let players = vec![base_player("me", "Blue")];
         let case = Case { own_team: Some("Blue".into()), ..Default::default() };
         let rows = case.run(&players, "me");
@@ -374,7 +420,10 @@ mod tests {
         let mut skins = HashMap::new();
         skins.insert(
             "me".to_string(),
-            PlayerSkinIds { vandal: Some("van".into()), phantom: None },
+            PlayerSkinIds {
+                vandal: EquippedSkin { skin: Some("van".into()), chroma: Some("van-c2".into()) },
+                phantom: EquippedSkin::default(),
+            },
         );
         let case =
             Case { updates, recent_stats, skins, own_team: Some("Blue".into()), ..Default::default() };
@@ -399,6 +448,83 @@ mod tests {
         let me = row(&rows, "me");
         assert_eq!(me.headshot_percent, None);
         assert_eq!(me.kd, None);
+    }
+
+    #[test]
+    fn an_absent_group_is_pending_until_the_build_settles() {
+        // Mid-build the row still renders its unranked shapes, but says the numbers are
+        // coming.
+        let players = vec![base_player("me", "Blue")];
+        let case = Case {
+            own_team: Some("Blue".into()),
+            ..Default::default()
+        };
+        let rows = case.run(&players, "me");
+        let me = row(&rows, "me");
+        assert!(me.pending.rank);
+        assert_eq!(me.current_rank.tier, 0);
+        assert_eq!(me.current_rank.name, "Unranked");
+        assert!(me.pending.name);
+        assert!(me.pending.history);
+        assert!(me.pending.recent_stats);
+    }
+
+    #[test]
+    fn the_settled_build_has_no_pending_flags() {
+        // Once the match is final an absent value is genuinely absent, never a skeleton.
+        let players = vec![base_player("me", "Blue")];
+        let case = Case {
+            own_team: Some("Blue".into()),
+            finality: true,
+            ingame: true,
+            ..Default::default()
+        };
+        let rows = case.run(&players, "me");
+        assert_eq!(
+            row(&rows, "me").pending,
+            crate::riot::types::PendingStats::default()
+        );
+    }
+
+    #[test]
+    fn a_fetched_group_stops_being_pending_mid_build() {
+        let players = vec![base_player("me", "Blue")];
+        let mut names = HashMap::new();
+        names.insert("me".to_string(), "Me#1".to_string());
+        let mmr = mmr_map(&[("me", json!({}))]);
+        let mut recent_stats = HashMap::new();
+        recent_stats.insert("me".to_string(), RecentStats::default());
+        let case = Case {
+            names,
+            mmr,
+            recent_stats,
+            own_team: Some("Blue".into()),
+            ..Default::default()
+        };
+        let rows = case.run(&players, "me");
+        let me = row(&rows, "me");
+        assert!(!me.pending.name);
+        assert!(!me.pending.rank);
+        assert!(!me.pending.recent_stats);
+        // The two match-history groups settle independently.
+        assert!(me.pending.history);
+    }
+
+    #[test]
+    fn skins_are_pending_only_while_an_ingame_loadout_is_outstanding() {
+        let players = vec![base_player("me", "Blue")];
+        let pending_skins = |ingame, loadouts_fetched| {
+            let case = Case {
+                own_team: Some("Blue".into()),
+                ingame,
+                loadouts_fetched,
+                ..Default::default()
+            };
+            case.run(&players, "me")[0].pending.skins
+        };
+        assert!(pending_skins(true, false));
+        assert!(!pending_skins(true, true)); // loadouts settle for the whole roster at once
+        assert!(!pending_skins(false, false)); // pregame has no loadouts to wait for
     }
 
     #[test]

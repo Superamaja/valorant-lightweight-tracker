@@ -1,6 +1,7 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-08-25 (phase 2 stats added; `kd` added). Status: backend implemented; this is the
+Last updated: 2026-08-25 (incremental stat loading: `PlayerRow.pending`, `enriched` reworked).
+Status: backend implemented; this is the
 exact TypeScript-facing contract the UI agent builds against. Everything the frontend
 receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
 
@@ -40,38 +41,47 @@ on mount to render immediately without waiting for the next event.
 Name: **`tracker-state`**. Payload: a `TrackerSnapshot` (below). Emitted on every resolved
 state change (dedup'd — identical snapshots are not re-emitted).
 
-**Two-phase snapshots at match start.** Entering Pregame or Ingame fires **two** events in
-quick succession for the same match (the heavy per-player stats take several seconds of
-sequential fetching, so the backend does not make the UI wait for them):
+**Incremental snapshots at match start.** Entering Pregame or Ingame fires a **series** of
+events for the same match: the per-player stats take several seconds of sequential fetching,
+so instead of waiting for a phase to finish the backend republishes the table as each stat
+settles, and every row says which of its stat groups are still coming (`pending`).
 
-1. **Fast snapshot** — as soon as names + MMR are in: `status`, `map`, `mode`, `ownTeam`,
-   and per row the `name`, `agent`, `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
-   `peakRankAct`, `accountLevel`, `partyId`, and `winRate` (WR is derived from the MMR payload, so it costs
-   no extra request). The heavier fields are **cached-if-available, skeleton otherwise**: a row
-   the backend already holds stats for (a same-match rebuild, a Pregame→Ingame upgrade, a
-   resumed or retried enrichment) carries them straight away, every other row has `rrChange`
-   `null`, `recentResults` `[]`, `headshotPercent` and `kd` `null`, and `vandalSkin` /
-   `phantomSkin` `null`. Values that are present are real — never partial or provisional.
-2. **Enriched snapshot** — a moment later, the same rows with `rrChange`, `recentResults`,
-   `headshotPercent`, `kd`, and (Ingame only) `vandalSkin` / `phantomSkin` filled in.
+The series is:
 
-The UI **must render the fast snapshot immediately** and let those fields fill in on the
-enriched event. **Key loading skeletons on the snapshot's `enriched` flag: `enriched === false`
-is the fast phase-1 snapshot (show skeletons for heavy fields that are still empty — rows the
-backend already had stats for arrive filled in); `enriched === true` means
-the heavy fields are final.** This supersedes the previous inference of "still loading" from
-data absence (treating a snapshot where no row had any heavy stat as the fast one) — that
-heuristic is no longer needed and must not be used. Once `enriched === true`, a `null`/empty
-heavy field means the player genuinely has no data for it (render the "N/A" placeholder), not
-"still loading". One bounded exception: if a player's stat fetches keep failing transiently, the
-backend retries the failed players a few times (publishing interim `enriched: false` snapshots),
-then gives up for that lobby and publishes `enriched: true` with the residual nulls — so a null
-under `enriched: true` means "no data obtainable this match", which the UI renders as N/A either
-way. Re-entering an already-loaded match
-(the score changes each round) emits a **single** already-enriched snapshot. A Pregame→Ingame
-transition re-runs the two phases for the now-visible enemy team. All of this rides the
-existing dedup, so listeners need no special handling beyond expecting stats to arrive on a
-later event than the row itself.
+1. **First paint** — as soon as the batch name resolution lands: `status`, `map`, `mode`,
+   `ownTeam`, and one row per player with `name`, `agent`, `accountLevel`, `partyId` and
+   `team`/`isAlly`/`isSelf`. Everything else is still empty, with `pending.rank`,
+   `pending.history`, `pending.recentStats` (and `pending.skins`, Ingame) set.
+2. **Progress snapshots** — one per settled stat, coalesced to at most one event per
+   **250 ms**, with a forced flush at each phase boundary. Ranks/RR/peak/WR clear
+   `pending.rank` per row as each MMR lands; ΔRR and the last-5 pips clear `pending.history`;
+   HS% and KD clear `pending.recentStats`; the Ingame loadouts clear `pending.skins` for the
+   whole roster at once.
+3. **Final snapshot** — `enriched: true`, every `pending` flag false.
+
+Rows the backend already holds data for (a same-match rebuild, a Pregame→Ingame upgrade, a
+resumed or retried enrichment) arrive filled in from the first paint. Values that are present
+are real — never partial or provisional.
+
+**The pending rule: a cell shows a skeleton iff its group's `pending` flag is true. A
+`null`/empty value with the flag false is final — render the "N/A" placeholder.** Never gate
+cells on `enriched`: it is a whole-snapshot summary, guaranteed to be `true` only when no row
+carries any pending flag, so it can say "everything settled" but never which cells are still
+loading. It is `true` on the final snapshot of a match, on re-entry to an already-loaded match,
+and on all non-match states.
+
+One bounded exception: if enrichment keeps failing (a player's stat fetches failing transiently,
+or an error that aborts the build), the backend retries a few times (publishing further
+`enriched: false` snapshots, those rows still pending), then gives up for that lobby and
+publishes `enriched: true` with the residual nulls
+and no pending flags — so a null there means "no data obtainable this match", which the UI
+renders as N/A either way.
+
+Re-entering an already-loaded match (the score changes each round) emits a **single**
+already-final snapshot. A Pregame→Ingame transition re-runs the series for the now-visible
+enemy team. All of this rides the existing dedup (a step that changed nothing is suppressed),
+so listeners need no special handling beyond expecting stats to arrive on a later event than
+the row itself.
 
 ```ts
 import { listen } from "@tauri-apps/api/event";
@@ -109,10 +119,9 @@ interface TrackerSnapshot {
   mode: string | null;          // display mode name (see below); null outside a match
   ownTeam: string | null;       // local player's team id ("Red"|"Blue"); null outside a match
   players: PlayerRow[];         // [] in Menus / ValorantNotRunning
-  enriched: boolean;            // false ONLY on the fast phase-1 snapshot (heavy stats still
-                                // loading — present per row only where already cached); true on
-                                // the enriched snapshot, on re-entry to an already-loaded match,
-                                // and on all non-match states
+  enriched: boolean;            // every stat has settled. Guaranteed: true implies no row
+                                // carries a pending flag. A summary, NOT a per-cell gate —
+                                // key skeletons on PlayerRow.pending instead
   lastUpdated: number;          // epoch milliseconds this snapshot was produced
   message: string | null;       // optional status line, e.g. "Waiting for Valorant..."
 }
@@ -144,8 +153,9 @@ interface PlayerRow {
                                 // season could be attributed to the peak
   accountLevel: number | null;  // null when hidden from this viewer (see rules below)
   partyId: string | null;       // grouping id; set only when the player is in a party of >1
+  pending: PendingStats;        // which of this row's stat groups are still loading
 
-  // --- Phase 2 per-player stats ---
+  // --- Per-player stats (fetched after the first paint) ---
   winRate: WinRate | null;      // current-season WR; null when 0 games this season
   rrChange: number | null;      // ΔRR of the player's newest competitive match; null if none
   recentResults: MatchResult[]; // up to 5 recent comp results, newest first; [] when none
@@ -154,6 +164,16 @@ interface PlayerRow {
                                 // null when those matches carry no stats for the player
   vandalSkin: SkinInfo | null;  // equipped Vandal skin; null in Pregame / Menus
   phantomSkin: SkinInfo | null; // equipped Phantom skin; null in Pregame / Menus
+}
+
+interface PendingStats {       // true = still loading (skeleton); false = settled
+  name: boolean;                // `name`
+  rank: boolean;                // `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
+                                // `peakRankAct`, `winRate` — all one MMR payload
+  history: boolean;             // `rrChange`, `recentResults`
+  recentStats: boolean;         // `headshotPercent`, `kd`
+  skins: boolean;               // `vandalSkin`, `phantomSkin` (Ingame only; settles for the
+                                // whole roster at once)
 }
 
 interface WinRate {
@@ -240,9 +260,9 @@ interface RankInfo {
   URLs the UI loads (and may cache) directly.
 - **`lastUpdated`** is epoch ms — use it for the "last updated" text in the header.
 
-### Phase 2 stat fields
+### Per-player stat fields
 
-- **All phase-2 stats are populated for every player, incognito included** — a hidden player
+- **All these stats are populated for every player, incognito included** — a hidden player
   still shows WR / ΔRR / last-5 / HS% / KD / skins; only `name` and `accountLevel` are withheld
   (their puuid is known, so the stats are real). This matches vRY.
 - **`winRate`** is derived from the same MMR payload used for ranks (no extra request):

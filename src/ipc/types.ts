@@ -42,6 +42,22 @@ export interface WinRate {
   games: number;
 }
 
+/**
+ * Which of a row's stat groups are still in flight. A group is a skeleton while its flag is
+ * true; once it is false an absent value is final ("N/A"), not loading.
+ */
+export interface PendingStats {
+  name: boolean;
+  /** Current rank, RR, leaderboard, peak, peak act and win rate — all one MMR payload. */
+  rank: boolean;
+  /** ΔRR and the last-5 pips. */
+  history: boolean;
+  /** HS% and KD. */
+  recentStats: boolean;
+  /** Vandal and Phantom skins. */
+  skins: boolean;
+}
+
 export interface PlayerRow {
   /** puuid — a stable React key only. */
   id: string;
@@ -63,7 +79,10 @@ export interface PlayerRow {
   accountLevel: number | null;
   partyId: string | null;
 
-  // Phase-2 stats. Absent on a match's first ("fast") snapshot — see `TrackerSnapshot.enriched`.
+  /** Per-group loading state. Read it through `pendingOf` — old snapshots predate it. */
+  pending: PendingStats;
+
+  // Stats that arrive after the first paint — each cell is a skeleton until its group settles.
   winRate: WinRate | null;
   rrChange: number | null;
   recentResults: MatchResult[];
@@ -83,7 +102,10 @@ export interface TrackerSnapshot {
   players: PlayerRow[];
   /** Epoch milliseconds. */
   lastUpdated: number;
-  /** False only on a match's fast snapshot while heavy stats are in flight — key skeletons on this. */
+  /**
+   * Every stat has settled. Guaranteed to imply no row carries a pending flag, so it is a
+   * summary, not a gate: cells key their skeletons off `PlayerRow.pending`.
+   */
   enriched: boolean;
   message: string | null;
 }

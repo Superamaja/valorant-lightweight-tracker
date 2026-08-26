@@ -465,7 +465,7 @@ serde camelCase names are in `docs/ipc-contract.md`.
   player, `round()` to int, "N/a" when no hits. **The match id list is reused from the
   competitiveupdates response** (`Matches[].MatchID`) rather than a separate
   `match-history` request — this keeps the match-start burst to the documented budget
-  (competitiveupdates already carries the ids). `RECENT_MATCHES_FOR_HS = 3` match-details per
+  (competitiveupdates already carries the ids). `RECENT_MATCHES_FOR_HS = 5` match-details per
   uncached player (vRY uses 1; widened for a steadier figure — constant in `constants.rs`).
   match-details are ~500 KB, so HS% is **cached per puuid keyed by newest competitive match
   id** in a session-lived `HsCache` (survives match→menus→match; self-invalidates when the
@@ -499,7 +499,7 @@ serde camelCase names are in `docs/ipc-contract.md`.
 
 **Request-count math at match start (10 players, all uncached, INGAME):** unchanged phase-1
 core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) **plus phase
-2**: 10 competitiveupdates + up to 10×3 = 30 match-details + 1 loadouts = **41 new requests**.
+2**: 10 competitiveupdates + up to 10×5 = 50 match-details + 1 loadouts = **61 new requests**.
 All routed through the existing 429 retry with a `INTER_REQUEST_DELAY_MS = 120` pause between
 per-player requests. A match-details payload is downloaded **once per match id**, not once per
 player (`MatchDetailsCache`, session-lived, keeps only the parsed per-player totals), so lobby
@@ -616,6 +616,37 @@ backend side (`ipc-contract.md` updated to match):
   `ipc-contract.md` corrected to document it as `string | null` with `"locked"`/`"selected"` as
   the known values and other strings possible.
 
+### Incremental stat loading (2026-08-25)
+
+The two-phase emit became a settle-point emit: the table is published as each stat lands
+instead of at the two phase boundaries, and each row carries a `PendingStats` group map
+(`name` / `rank` / `history` / `recentStats` / `skins`) so the UI skeletons individual cells.
+
+- **Emission points** (`app_state::build_match_snapshot` and the two fetch phases). Forced:
+  the name batch resolving (the first paint), the end of phase 1, and the final publish.
+  Coalesced: each MMR insert, each competitiveupdates insert, each `recent_stats` insert (per
+  *player*, not per match-details download), and the loadouts landing.
+- **Coalescer.** `PROGRESS_COALESCE_MS = 250`: a `ProgressGate` holding the last emit's
+  `Instant` lets an emit through when it is forced or the window has passed. No dirty tracking
+  is needed because every phase ends in a forced flush, so a swallowed emit is never the last
+  word. The decision is the pure `should_emit(elapsed, forced)`, unit-tested. Worst case is a
+  handful of events per second during the opening burst.
+- **Pending rule** (`assemble.rs`). A group is pending iff its cache map lacks the row's entry
+  **and** the build is not the final one (`AssembleInput::finality`); `skins` is per-match
+  (`ingame && !loadouts_fetched`) because loadouts arrive for the whole roster at once. Row
+  ordering and the privacy withholding are untouched.
+- **`enriched` reworked** to "every stat has settled", with the invariant `enriched == true`
+  ⇒ no row carries a pending flag. `assemble_snapshot` passes the one flag as both the
+  snapshot's `enriched` and the assembler's `finality`, so the invariant holds by
+  construction; unit-tested against an empty cache.
+- **`SnapshotParts`** carries the fixed match context (roster, parties, map, mode, status,
+  static data, season) so a phase can hold `MatchCache` mutably and still publish — the
+  borrow conflict that made mid-loop emits awkward.
+- **Request counts and retry/finality semantics are unchanged.** Every fetch, retry, cache
+  lookup, inter-request delay, rate-limit gate, poke cancellation and `enrichment_is_final`
+  rule is byte-for-byte what it was; only emission timing and the new pending metadata
+  changed. The existing tests guard this.
+
 ### TLS
 
 - Local HTTPS client (`reqwest`) and the local websocket (`tokio-tungstenite` + `native-tls`)
@@ -656,7 +687,7 @@ backend side (`ipc-contract.md` updated to match):
 3. Both presence shapes (nested/flat) are handled correctly against whatever Riot serves now.
 4. 404/`RESOURCE_NOT_FOUND` retry timing and `BAD_CLAIMS` refresh behave in real transitions.
 5. Party grouping across all online presences matches the in-game party colours.
-6. (Phase 2) The match-start stat burst (41 requests for a 10-player lobby) stays under Riot's
+6. (Phase 2) The match-start stat burst (61 requests for a 10-player lobby) stays under Riot's
    rate limit with the 120 ms inter-request delay + 429 retry — the probe captures were solo/
    2v2, so the full-lobby throughput is untested. Loadouts were verified for 4 players; the
    Phantom weapon id + a Phantom-equipped player were only cross-checked via valorant-api, not

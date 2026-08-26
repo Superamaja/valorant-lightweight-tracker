@@ -20,7 +20,7 @@ export interface Column {
  * How many recent competitive matches HS% is computed over. Mirrors the backend's
  * `RECENT_MATCHES_FOR_HS` (`src-tauri/src/riot/constants.rs`) — keep the two in step.
  */
-export const HS_MATCH_WINDOW = 3;
+export const HS_MATCH_WINDOW = 5;
 export const HS_SCOPE = `last ${HS_MATCH_WINDOW} competitive matches`;
 
 /**
@@ -75,8 +75,6 @@ export interface TableLayout {
   /** `grid-template-columns` value from `gridTemplate`. */
   template: string;
   withSkins: boolean;
-  /** The enriched snapshot has not arrived yet — heavy stat cells show skeletons. */
-  loading: boolean;
   parties: Map<string, PartyMark>;
 }
 

@@ -98,6 +98,25 @@ pub struct SkinInfo {
     pub icon_url: Option<String>,
 }
 
+/// Which of a row's stat groups are still being fetched. A group is pending while the data
+/// it needs has not settled; `false` everywhere means the row is final, so an absent value is
+/// genuinely absent ("N/A") rather than in flight. Default = settled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingStats {
+    /// The batch name resolution has not landed for this player.
+    pub name: bool,
+    /// The MMR payload has not landed: current rank, RR, leaderboard, peak, peak act and WR
+    /// all come from it.
+    pub rank: bool,
+    /// competitiveupdates has not landed: ΔRR and the last-5 pips.
+    pub history: bool,
+    /// The recent match-details have not landed: HS% and KD.
+    pub recent_stats: bool,
+    /// The match's loadouts have not landed: Vandal and Phantom skins.
+    pub skins: bool,
+}
+
 /// One row in the in-match player table.
 // Not `Eq`: `kd` is a float. Snapshot dedup only ever needs `PartialEq`, and the value is a
 // finite ratio (never NaN), so equality stays well behaved.
@@ -152,6 +171,8 @@ pub struct PlayerRow {
     pub vandal_skin: Option<SkinInfo>,
     /// Equipped Phantom skin (INGAME only; null in pregame/menus).
     pub phantom_skin: Option<SkinInfo>,
+    /// Which of this row's stat groups are still in flight.
+    pub pending: PendingStats,
 }
 
 /// Resolved map info.
@@ -182,11 +203,11 @@ pub struct TrackerSnapshot {
     pub own_team: Option<String>,
     /// Player rows (empty in menus / not-running).
     pub players: Vec<PlayerRow>,
-    /// Whether the heavy per-player stats are populated. `false` ONLY on the fast phase-1
-    /// snapshot of a match whose stats are still being fetched; `true` on the enriched
-    /// snapshot, on re-entry snapshots of an already-loaded match, and on all non-match
-    /// states (Menus / ValorantNotRunning). Lets the UI key skeletons off this flag instead
-    /// of inferring "still loading" from data absence.
+    /// Whether every per-player stat has settled. `false` on the progress snapshots of a
+    /// match whose stats are still being fetched; `true` on the final snapshot of a match, on
+    /// re-entry snapshots of an already-loaded match, and on all non-match states (Menus /
+    /// ValorantNotRunning). Invariant: `enriched == true` implies no row carries a `pending`
+    /// flag. The UI keys skeletons off the per-row `pending` groups, not off this flag.
     pub enriched: bool,
     /// Epoch milliseconds when this snapshot was produced.
     pub last_updated: u64,

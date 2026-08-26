@@ -37,12 +37,21 @@ struct TierStatic {
 struct SkinStatic {
     display_name: String,
     display_icon: Option<String>,
+    /// lowercased chroma uuid -> its own art, when it has any of its own.
+    #[serde(default)]
+    chromas: HashMap<String, Option<String>>,
 }
+
+/// Shape version of the cached blob. Bumped whenever a new mapping is added, so caches
+/// written by an older build are refetched instead of serving half the data.
+const CURRENT_STATIC_SCHEMA: u32 = 1;
 
 /// Cached, parsed static data for one game version.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StaticData {
     pub version: String,
+    #[serde(default)]
+    schema: u32,
     /// lowercased agent uuid -> agent.
     agents: HashMap<String, AgentStatic>,
     maps: Vec<MapStatic>,
@@ -58,7 +67,8 @@ impl StaticData {
     /// version-keyed disk cache, and a cache file that fails this is treated as absent, so a
     /// bad cache entry self-heals on the next fetch for that version.
     pub fn is_complete(&self) -> bool {
-        !self.version.is_empty()
+        self.schema == CURRENT_STATIC_SCHEMA
+            && !self.version.is_empty()
             && !self.agents.is_empty()
             && !self.maps.is_empty()
             && !self.tiers.is_empty()
@@ -92,12 +102,20 @@ impl StaticData {
     /// Resolve a weapon-skin uuid (any case) to display-ready info. `None` skin id -> None
     /// (weapon not equipped / pregame). An unknown uuid still returns an entry with an empty
     /// name so the UI can decide how to render it.
-    pub fn skin(&self, skin_id: Option<&str>) -> Option<SkinInfo> {
+    ///
+    /// `chroma_id` swaps in that colourway's art when it belongs to this skin and has art of
+    /// its own; any miss keeps the base icon. The name is always the base skin's — chromas
+    /// are variants of it, not separate skins.
+    pub fn skin(&self, skin_id: Option<&str>, chroma_id: Option<&str>) -> Option<SkinInfo> {
         let id = skin_id?.to_lowercase();
         let s = self.skins.get(&id);
+        let chroma_icon = chroma_id
+            .and_then(|c| s?.chromas.get(&c.to_lowercase()))
+            .cloned()
+            .flatten();
         Some(SkinInfo {
             name: s.map(|s| s.display_name.clone()).unwrap_or_default(),
-            icon_url: s.and_then(|s| s.display_icon.clone()),
+            icon_url: chroma_icon.or_else(|| s.and_then(|s| s.display_icon.clone())),
         })
     }
 
@@ -206,6 +224,28 @@ fn parse_competitive_tiers(value: &Value) -> HashMap<u8, TierStatic> {
 /// Matching on the parent weapon (rather than a skin `assetPath` heuristic) is the robust
 /// route: the two weapons' `skins` arrays are exactly the skins we need. Some skins have a
 /// null top-level `displayIcon` (default/random skins); fall back to the first level's icon.
+/// Parse one skin's `chromas` array into lowercased chroma uuid -> art. `fullRender` is the
+/// chroma's own render; `displayIcon` is the fallback, and the base chroma of most skins has
+/// neither (it simply reuses the skin's icon) — stored as `None` so lookups fall back.
+fn parse_chromas(skin: &Value) -> HashMap<String, Option<String>> {
+    let mut out = HashMap::new();
+    let Some(arr) = skin.get("chromas").and_then(|c| c.as_array()) else {
+        return out;
+    };
+    for c in arr {
+        let Some(uuid) = c.get("uuid").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let icon = c
+            .get("fullRender")
+            .and_then(|v| v.as_str())
+            .or_else(|| c.get("displayIcon").and_then(|v| v.as_str()))
+            .map(String::from);
+        out.insert(uuid.to_lowercase(), icon);
+    }
+    out
+}
+
 fn parse_weapon_skins(value: &Value) -> HashMap<String, SkinStatic> {
     let mut out = HashMap::new();
     let Some(arr) = value.get("data").and_then(|d| d.as_array()) else {
@@ -240,6 +280,7 @@ fn parse_weapon_skins(value: &Value) -> HashMap<String, SkinStatic> {
                         .unwrap_or_default()
                         .to_string(),
                     display_icon,
+                    chromas: parse_chromas(s),
                 },
             );
         }
@@ -258,6 +299,7 @@ pub fn build(
 ) -> StaticData {
     StaticData {
         version,
+        schema: CURRENT_STATIC_SCHEMA,
         agents: parse_agents(agents),
         maps: parse_maps(maps),
         tiers: parse_competitive_tiers(tiers),
@@ -474,7 +516,13 @@ mod tests {
         let weapons = json!({ "data": [
             { "uuid": VANDAL_WEAPON_ID, "displayName": "Vandal", "skins": [
                 { "uuid": "DB91451C-4309-2C8C-EDED-BF842D844E52", "displayName": "Neptune Vandal",
-                  "displayIcon": "https://x/neptune.png" },
+                  "displayIcon": "https://x/neptune.png", "chromas": [
+                      // base chroma: no art of its own.
+                      { "uuid": "NEPTUNE-C1", "fullRender": null, "displayIcon": null },
+                      { "uuid": "neptune-c2", "fullRender": "https://x/neptune-c2.png" },
+                      // fullRender missing -> displayIcon.
+                      { "uuid": "neptune-c3", "displayIcon": "https://x/neptune-c3.png" }
+                  ]},
                 // default skin: null top-level displayIcon, icon in levels[0]
                 { "uuid": "fallback-skin", "displayName": "Standard Vandal", "displayIcon": null,
                   "levels": [ { "displayIcon": "https://x/standard.png" } ] }
@@ -489,22 +537,89 @@ mod tests {
             ]}
         ]});
         let data = build("v".into(), &json!({}), &json!({}), &json!({}), &weapons);
-        let van = data.skin(Some("db91451c-4309-2c8c-eded-bf842d844e52")).unwrap();
+        let van = data.skin(Some("db91451c-4309-2c8c-eded-bf842d844e52"), None).unwrap();
         assert_eq!(van.name, "Neptune Vandal");
         assert_eq!(van.icon_url.as_deref(), Some("https://x/neptune.png"));
         // level fallback for a null top-level icon.
-        let fb = data.skin(Some("fallback-skin")).unwrap();
+        let fb = data.skin(Some("fallback-skin"), None).unwrap();
         assert_eq!(fb.icon_url.as_deref(), Some("https://x/standard.png"));
         // phantom skin kept too.
-        assert_eq!(data.skin(Some("reaver-phantom")).unwrap().name, "Reaver Phantom");
+        assert_eq!(data.skin(Some("reaver-phantom"), None).unwrap().name, "Reaver Phantom");
         // a non-Vandal/Phantom weapon's skin is filtered out -> resolves to an empty entry.
-        assert_eq!(data.skin(Some("ignored-skin")).unwrap().name, "");
+        assert_eq!(data.skin(Some("ignored-skin"), None).unwrap().name, "");
         // unknown uuid -> empty name, no icon.
-        let unknown = data.skin(Some("nope")).unwrap();
+        let unknown = data.skin(Some("nope"), None).unwrap();
         assert_eq!(unknown.name, "");
         assert!(unknown.icon_url.is_none());
         // None -> None.
-        assert!(data.skin(None).is_none());
+        assert!(data.skin(None, None).is_none());
+    }
+
+    #[test]
+    fn chroma_overrides_the_icon_but_never_the_name() {
+        let weapons = json!({ "data": [
+            { "uuid": VANDAL_WEAPON_ID, "skins": [
+                { "uuid": "neptune", "displayName": "Neptune Vandal",
+                  "displayIcon": "https://x/neptune.png", "chromas": [
+                      { "uuid": "c-base", "fullRender": null, "displayIcon": null },
+                      { "uuid": "C-RED", "fullRender": "https://x/neptune-red.png" },
+                      { "uuid": "c-blue", "displayIcon": "https://x/neptune-blue.png" }
+                  ]},
+                { "uuid": "reaver", "displayName": "Reaver Vandal",
+                  "displayIcon": "https://x/reaver.png" }
+            ]}
+        ]});
+        let data = build("v".into(), &json!({}), &json!({}), &json!({}), &weapons);
+        // chroma art wins, base name stays.
+        let red = data.skin(Some("neptune"), Some("c-red")).unwrap();
+        assert_eq!(red.name, "Neptune Vandal");
+        assert_eq!(red.icon_url.as_deref(), Some("https://x/neptune-red.png"));
+        // fullRender absent -> the chroma's displayIcon.
+        assert_eq!(
+            data.skin(Some("neptune"), Some("c-blue"))
+                .unwrap()
+                .icon_url
+                .as_deref(),
+            Some("https://x/neptune-blue.png")
+        );
+        // chroma with no art of its own -> base icon.
+        assert_eq!(
+            data.skin(Some("neptune"), Some("c-base"))
+                .unwrap()
+                .icon_url
+                .as_deref(),
+            Some("https://x/neptune.png")
+        );
+        // unknown chroma -> base icon.
+        assert_eq!(
+            data.skin(Some("neptune"), Some("nope"))
+                .unwrap()
+                .icon_url
+                .as_deref(),
+            Some("https://x/neptune.png")
+        );
+        // a chroma belonging to a different skin -> base icon.
+        assert_eq!(
+            data.skin(Some("reaver"), Some("c-red"))
+                .unwrap()
+                .icon_url
+                .as_deref(),
+            Some("https://x/reaver.png")
+        );
+        // no chroma -> base icon, as before.
+        assert_eq!(
+            data.skin(Some("neptune"), None)
+                .unwrap()
+                .icon_url
+                .as_deref(),
+            Some("https://x/neptune.png")
+        );
+        // an unknown skin stays unresolved whatever the chroma.
+        assert!(data
+            .skin(Some("nope"), Some("c-red"))
+            .unwrap()
+            .icon_url
+            .is_none());
     }
 
     #[test]
@@ -552,6 +667,24 @@ mod tests {
         assert!(!build(String::new(), &agents, &maps, &tiers, &weapons).is_complete());
         // All four present -> cacheable.
         assert!(build("v".into(), &agents, &maps, &tiers, &weapons).is_complete());
+    }
+
+    #[test]
+    fn a_cache_from_an_older_schema_is_treated_as_absent() {
+        let agents = json!({ "data": [
+            { "uuid": "a", "displayName": "Reyna", "isPlayableCharacter": true }
+        ]});
+        let maps =
+            json!({ "data": [ { "mapUrl": "/Game/Maps/Ascent/Ascent", "displayName": "Ascent" } ]});
+        let tiers = json!({ "data": [ { "tiers": [ { "tier": 27, "largeIcon": "n.png" } ] } ]});
+        let weapons = json!({ "data": [
+            { "uuid": VANDAL_WEAPON_ID, "skins": [ { "uuid": "s", "displayName": "Neptune" } ] }
+        ]});
+        let mut old = build("v".into(), &agents, &maps, &tiers, &weapons);
+        assert!(old.is_complete());
+        // A blob written before the schema field existed deserializes to 0 -> refetched.
+        old.schema = 0;
+        assert!(!old.is_complete());
     }
 
     #[test]

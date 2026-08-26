@@ -1,4 +1,21 @@
-import type { PlayerRow } from "../ipc/types";
+import type { PendingStats, PlayerRow } from "../ipc/types";
+
+/** Nothing outstanding — what a row without the field is treated as. */
+const SETTLED: PendingStats = {
+  name: false,
+  rank: false,
+  history: false,
+  recentStats: false,
+  skins: false,
+};
+
+/**
+ * A row's loading state. Debug snapshots captured before `pending` existed have no such
+ * field, so they read as fully settled rather than blanking every cell into a skeleton.
+ */
+export function pendingOf(player: PlayerRow): PendingStats {
+  return player.pending ?? SETTLED;
+}
 
 /**
  * Split into team blocks. `players` is already ordered by the backend (ally block first,

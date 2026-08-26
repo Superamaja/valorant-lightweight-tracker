@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { PlayerRow } from "../../ipc/types";
-import { displayName } from "../../lib/players";
+import { displayName, pendingOf } from "../../lib/players";
 import { copyText, openProfile } from "../../lib/profile";
-import { CheckIcon, CopyIcon } from "../primitives";
+import { CheckIcon, CopyIcon, Skeleton } from "../primitives";
 
 /**
  * Riot id. Click opens tracker.gg, right-click (or the hover icon) copies it. Both are
@@ -12,6 +12,9 @@ export function NameCell({ player }: { player: PlayerRow }) {
   const [copied, setCopied] = useState(false);
   const riotId = player.name;
   const label = displayName(player);
+  // Incognito rows are shown by agent and never resolve a name, so only the rows whose name
+  // is genuinely still coming wait for it.
+  const awaitingName = !riotId && !player.incognito && pendingOf(player).name;
 
   useEffect(() => {
     if (!copied) return;
@@ -25,7 +28,9 @@ export function NameCell({ player }: { player: PlayerRow }) {
 
   return (
     <div className="relative flex min-w-0 items-center gap-1.5">
-      {riotId ? (
+      {awaitingName ? (
+        <Skeleton className="h-2 w-24 rounded-full" />
+      ) : riotId ? (
         <button
           type="button"
           onClick={() => void openProfile(riotId)}

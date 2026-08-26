@@ -1,5 +1,5 @@
 import type { PlayerRow as Player } from "../ipc/types";
-import type { PartyMark } from "../lib/players";
+import { pendingOf, type PartyMark } from "../lib/players";
 import { ROW_GRID, TEAM_TINT, type TableLayout, type TeamSide } from "../lib/table";
 import { AgentCell } from "./cells/AgentCell";
 import { NameCell } from "./cells/NameCell";
@@ -30,6 +30,7 @@ export function PlayerRow({
   layout: TableLayout;
 }) {
   const tint = TEAM_TINT[side];
+  const pending = pendingOf(player);
 
   return (
     <div
@@ -46,22 +47,23 @@ export function PlayerRow({
       />
       <NameCell player={player} />
       {layout.withSkins && (
-        <SkinCell skin={player.vandalSkin} weapon="Vandal" loading={layout.loading} />
+        <SkinCell skin={player.vandalSkin} weapon="Vandal" pending={pending.skins} />
       )}
       {layout.withSkins && (
-        <SkinCell skin={player.phantomSkin} weapon="Phantom" loading={layout.loading} />
+        <SkinCell skin={player.phantomSkin} weapon="Phantom" pending={pending.skins} />
       )}
       <RankCell
         rank={player.currentRank}
         rr={player.rr}
         leaderboardRank={player.leaderboardRank}
+        pending={pending.rank}
       />
-      <PeakCell rank={player.peakRank} act={player.peakRankAct} />
-      <HeadshotCell percent={player.headshotPercent} loading={layout.loading} />
-      <KdCell kd={player.kd} loading={layout.loading} />
-      <WinRateCell winRate={player.winRate} />
-      <ResultPips results={player.recentResults} loading={layout.loading} />
-      <RrChangeCell change={player.rrChange} loading={layout.loading} />
+      <PeakCell rank={player.peakRank} act={player.peakRankAct} pending={pending.rank} />
+      <HeadshotCell percent={player.headshotPercent} pending={pending.recentStats} />
+      <KdCell kd={player.kd} pending={pending.recentStats} />
+      <WinRateCell winRate={player.winRate} pending={pending.rank} />
+      <ResultPips results={player.recentResults} pending={pending.history} />
+      <RrChangeCell change={player.rrChange} pending={pending.history} />
     </div>
   );
 }

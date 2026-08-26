@@ -102,9 +102,14 @@ pub const PHANTOM_WEAPON_ID: &str = "ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a";
 /// `Sockets` map. (Verified live — spec Live verification round 2.)
 pub const SKIN_SOCKET_ID: &str = "bcef87d6-209b-46c6-8b19-fbe40bd95abc";
 
+/// Socket uuid whose `Item.ID` holds the equipped chroma (skin colourway) uuid. Community-
+/// standard value; not yet confirmed against a live capture, and a miss degrades to the base
+/// skin art rather than failing.
+pub const CHROMA_SOCKET_ID: &str = "3ad1b2b2-acdb-4524-852f-954a76ddae0a";
+
 /// Number of recent competitive matches HS% is averaged over (vRY uses 1; we widen the
 /// sample for a steadier figure). match-details are ~500 KB each, so keep this small.
-pub const RECENT_MATCHES_FOR_HS: usize = 3;
+pub const RECENT_MATCHES_FOR_HS: usize = 5;
 
 /// Number of W/L pips shown for the "last games" column.
 pub const RECENT_RESULTS_COUNT: usize = 5;

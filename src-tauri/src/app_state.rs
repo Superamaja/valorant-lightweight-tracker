@@ -16,7 +16,7 @@ use crate::riot::rank::{parse_mmr, MmrResponse};
 use crate::riot::remote_api::{build_hosts, Auth, RemoteClient};
 use crate::riot::static_data::{self, StaticData};
 use crate::riot::stats::{self, MatchContribution, MatchTotals, RecentStats, RrHistory};
-use crate::riot::types::{AppStatus, MapInfo, SessionLoopState, TrackerSnapshot};
+use crate::riot::types::{AppStatus, MapInfo, PendingStats, SessionLoopState, TrackerSnapshot};
 use crate::riot::websocket::Poke;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -71,9 +71,9 @@ impl TrackerState {
 }
 
 /// Emit + store a snapshot only if it differs from the last one (avoids UI churn). This
-/// dedup is what makes the two-phase emit safe: the phase-1 snapshot and the enriched
-/// phase-2 snapshot differ (heavy fields fill in), so both fire, while a phase that adds
-/// nothing (e.g. a pregame with no recent matches) is silently suppressed.
+/// dedup is what makes the incremental emit safe: each progress snapshot differs from the
+/// last (a stat group settles, so values fill in and a pending flag clears), while a step
+/// that adds nothing (e.g. a pregame with no recent matches) is silently suppressed.
 fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSnapshot) {
     {
         let prev = state.snapshot.lock().unwrap();
@@ -178,6 +178,74 @@ struct BuildCtx<'a> {
     rx: &'a mut mpsc::Receiver<Poke>,
 }
 
+/// Everything a snapshot needs besides the cache: the fixed match context a build resolves
+/// once and every emit of that build reuses. Kept apart from the cache so a phase can hold
+/// the cache mutably and still publish.
+struct SnapshotParts<'a> {
+    players: &'a [MatchPlayer],
+    parties: &'a HashMap<String, String>,
+    own_team: Option<String>,
+    map: Option<MapInfo>,
+    mode: Option<String>,
+    status: AppStatus,
+    static_data: &'a StaticData,
+    own_puuid: &'a str,
+    season_id: &'a str,
+    seasons: &'a [content::Season],
+    /// INGAME — the only state where loadouts exist.
+    ingame: bool,
+}
+
+/// How long a burst of settling stats may accumulate before the next progress snapshot goes
+/// out. Every phase ends in a forced flush, so an emit the window swallowed is never the last
+/// word and needs no dirty tracking.
+const PROGRESS_COALESCE_MS: u64 = 250;
+
+/// Paces the mid-build progress emits so a fast burst can't turn into an event per request.
+#[derive(Default)]
+struct ProgressGate {
+    last_emit: Option<Instant>,
+}
+
+impl ProgressGate {
+    /// Whether this emit goes out now, recording it when it does.
+    fn take(&mut self, forced: bool) -> bool {
+        if !should_emit(self.last_emit.map(|at| at.elapsed()), forced) {
+            return false;
+        }
+        self.last_emit = Some(Instant::now());
+        true
+    }
+}
+
+/// Whether a progress emit goes out: a forced one always, the first one immediately, and the
+/// rest only once the coalescing window has passed. Pure.
+fn should_emit(elapsed: Option<Duration>, forced: bool) -> bool {
+    forced || elapsed.is_none_or(|since| since >= Duration::from_millis(PROGRESS_COALESCE_MS))
+}
+
+/// The publishing side of a build: the fixed match context plus the emit pacing, so each
+/// phase can hand the table to the UI as its stats settle instead of at the phase boundary.
+struct Progress<'a, 'p> {
+    ctx: &'a mut BuildCtx<'p>,
+    parts: &'a SnapshotParts<'a>,
+    gate: ProgressGate,
+    /// Whether the match's loadouts have settled (they arrive for the whole roster at once).
+    loadouts_fetched: bool,
+}
+
+impl Progress<'_, '_> {
+    /// Publish what the cache holds so far. Never final: the rows that are still outstanding
+    /// carry their pending flags, and the snapshot dedup drops a step that changed nothing.
+    fn publish_progress(&mut self, cache: &MatchCache, forced: bool) {
+        if !self.gate.take(forced) {
+            return;
+        }
+        let snap = assemble_snapshot(self.parts, cache, self.loadouts_fetched, false);
+        publish(self.ctx.state, self.ctx.emitter, snap);
+    }
+}
+
 /// Agent-select poll cadence (see `poll_interval`).
 const PREGAME_POLL_MS: u64 = 1000;
 
@@ -203,6 +271,22 @@ const RETRY_BACKOFF_MS: [u64; 4] = [1000, 2000, 4000, 8000];
 /// and the loop should go back to waiting for an event. Pure.
 fn retry_delay(attempt: usize) -> Option<Duration> {
     RETRY_BACKOFF_MS.get(attempt).copied().map(Duration::from_millis)
+}
+
+/// Settle a snapshot no further attempt will improve: every group still marked pending is as
+/// final as it is going to get, so the flags clear and the snapshot becomes `enriched` — a
+/// cell whose data never arrived renders as N/A instead of a skeleton waiting on a rebuild
+/// that isn't scheduled. Equivalent to re-assembling the same cache with finality, which is
+/// where a settled snapshot otherwise comes from. Reports whether anything changed. Pure.
+fn settle_pending(snap: &mut TrackerSnapshot) -> bool {
+    if snap.players.iter().all(|p| p.pending == PendingStats::default()) {
+        return false;
+    }
+    for player in &mut snap.players {
+        player.pending = PendingStats::default();
+    }
+    snap.enriched = true;
+    true
 }
 
 /// What one build attempt asks the session loop to do next.
@@ -465,9 +549,9 @@ fn window_step(
 }
 
 /// How many parsed matches the session keeps. One full lobby's HS%/KD window spans at most
-/// `10 * RECENT_MATCHES_FOR_HS` matches, so this covers a lobby plus its overlap with the next
-/// one; past that the oldest entry goes.
-const MATCH_DETAILS_CACHE_CAP: usize = 64;
+/// `10 * RECENT_MATCHES_FOR_HS` = 50 matches, so this covers a lobby plus its overlap with the
+/// next one; past that the oldest entry goes.
+const MATCH_DETAILS_CACHE_CAP: usize = 128;
 
 /// Session-lived cache of parsed match-details, keyed by match id. Lobby players share recent
 /// matches, so keying the download by match instead of by player collapses the duplicates —
@@ -719,7 +803,15 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
                 }
                 continue;
             }
-            // Schedule exhausted — fall back to the event-driven wait below.
+            // Schedule exhausted — fall back to the event-driven wait below, after settling
+            // the published table: the rebuild that would have filled its outstanding cells is
+            // no longer scheduled, so leaving them pending would strand them on skeletons.
+            // Only the view is settled; the cache keeps its own `enriched`/attempt bookkeeping,
+            // so the next event still fetches what is missing.
+            let mut snap = state.snapshot();
+            if settle_pending(&mut snap) {
+                publish(state, emitter, snap);
+            }
         }
         // A success, an interruption, or an exhausted schedule all start the next failure
         // with a full retry budget.
@@ -871,12 +963,11 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
     }
 }
 
-/// Fetch + assemble a pregame or coregame snapshot, using the two-phase emit: the first
-/// snapshot carries names + ranks + RR + peak + WR (all free once names+MMR are in) with
-/// the heavy fields (rrChange / recentResults / headshotPercent / kd / skins) empty; a second,
-/// enriched snapshot follows once those are fetched. Reports `Interrupted` when enrichment
-/// aborted on a mid-burst poke, and `Retry` when phase 2 could not settle every player —
-/// the snapshot is published either way, just not as `enriched`.
+/// Fetch + assemble a pregame or coregame snapshot, publishing incrementally: the table
+/// appears as soon as the names are in and each stat group fills its cells in as it settles,
+/// paced by `PROGRESS_COALESCE_MS` and flushed at every phase boundary. Reports `Interrupted`
+/// when enrichment aborted on a mid-burst poke, and `Retry` when phase 2 could not settle
+/// every player — the snapshot is published either way, just not as `enriched`.
 async fn build_match_snapshot(
     session: &mut Session,
     info: &PresenceInfo,
@@ -925,17 +1016,20 @@ async fn build_match_snapshot(
     // match, and everything the match payload would carry is fixed for its duration, so this
     // path renders an own-presence event (the score rides the presence data) with one GET.
     if let Some(roster) = session.cache.cached_roster(&match_id, ingame) {
-        let map = session.static_data.map(roster.map_id.as_deref());
-        let snap = assemble_snapshot(
-            session,
-            &roster.players,
+        let parts = SnapshotParts {
+            players: &roster.players,
             parties,
-            roster.own_team.clone(),
-            map,
+            own_team: roster.own_team.clone(),
+            map: session.static_data.map(roster.map_id.as_deref()),
             mode,
             status,
-            true,
-        );
+            static_data: &session.static_data,
+            own_puuid: &session.own_puuid,
+            season_id: &session.season_id,
+            seasons: &session.seasons,
+            ingame,
+        };
+        let snap = assemble_snapshot(&parts, &session.cache, true, true);
         publish(ctx.state, ctx.emitter, snap);
         return Ok(BuildOutcome::Done);
     }
@@ -969,7 +1063,20 @@ async fn build_match_snapshot(
     // Fully cached (enriched, correct state) -> a single snapshot, no fetch. This is the
     // common in-match path: the score changes every round but nothing here is refetched.
     if session.cache.is_fresh_for(&match_id, ingame) {
-        let snap = assemble_snapshot(session, &players, parties, own_team, map, mode, status, true);
+        let parts = SnapshotParts {
+            players: &players,
+            parties,
+            own_team,
+            map,
+            mode,
+            status,
+            static_data: &session.static_data,
+            own_puuid: &session.own_puuid,
+            season_id: &session.season_id,
+            seasons: &session.seasons,
+            ingame,
+        };
+        let snap = assemble_snapshot(&parts, &session.cache, true, true);
         publish(ctx.state, ctx.emitter, snap);
         return Ok(BuildOutcome::Done);
     }
@@ -990,26 +1097,42 @@ async fn build_match_snapshot(
 
     let puuids: Vec<String> = players.iter().map(|p| p.puuid.clone()).collect();
 
-    // === Phase 1: names + MMR (fast fields). Publish immediately. ===
+    let parts = SnapshotParts {
+        players: &players,
+        parties,
+        own_team,
+        map,
+        mode,
+        status,
+        static_data: &session.static_data,
+        own_puuid: &session.own_puuid,
+        season_id: &session.season_id,
+        seasons: &session.seasons,
+        ingame,
+    };
+    let mut progress = Progress {
+        ctx,
+        parts: &parts,
+        gate: ProgressGate::default(),
+        // A pass that already got the loadouts (and failed elsewhere) does not refetch them,
+        // so they are settled before this build starts.
+        loadouts_fetched: !session.cache.skins.is_empty(),
+    };
+
+    // === Phase 1: names + MMR (fast fields). Publishes as they land. ===
     let gate = &session.rate_limit;
-    if !fetch_phase1(&session.remote, gate, &mut session.cache, &puuids, ctx.rx).await? {
+    let phase1 =
+        fetch_phase1(&session.remote, gate, &mut session.cache, &puuids, &mut progress).await;
+    // The phase boundary flushes whatever the outcome: a pass that ended early still owes the
+    // table what it managed to fetch, and that is what a giveup would settle on.
+    progress.publish_progress(&session.cache, true);
+    if !phase1? {
         // Phase-1 data stays cached (enriched == false), so the rebuild fetches only the rest.
         return Ok(BuildOutcome::Interrupted);
     }
-    let snap1 = assemble_snapshot(
-        session,
-        &players,
-        parties,
-        own_team.clone(),
-        map.clone(),
-        mode.clone(),
-        status,
-        false,
-    );
-    publish(ctx.state, ctx.emitter, snap1);
 
     // === Phase 2: competitiveupdates + HS%/KD + loadout skins. Interruptible. ===
-    let outcome = fetch_phase2(
+    let phase2 = fetch_phase2(
         &session.remote,
         &session.rate_limit,
         &mut session.cache,
@@ -1018,9 +1141,18 @@ async fn build_match_snapshot(
         &puuids,
         ingame,
         &match_id,
-        ctx.rx,
+        &mut progress,
     )
-    .await?;
+    .await;
+    let outcome = match phase2 {
+        Ok(outcome) => outcome,
+        // The pass that failed still owes the table what it fetched before it stopped; the
+        // final snapshot below is what would otherwise have carried it.
+        Err(err) => {
+            progress.publish_progress(&session.cache, true);
+            return Err(err);
+        }
+    };
 
     // A transient gap must NOT be published as `enriched` — the contract says an enriched
     // null means the player genuinely has no data. Publish what we have with the flag still
@@ -1040,45 +1172,46 @@ async fn build_match_snapshot(
     let is_final = enrichment_is_final(complete, session.cache.phase2_attempts);
 
     session.cache.enriched = is_final;
-    let snap2 = assemble_snapshot(session, &players, parties, own_team, map, mode, status, is_final);
-    publish(ctx.state, ctx.emitter, snap2);
+    let snap2 = assemble_snapshot(&parts, &session.cache, progress.loadouts_fetched, is_final);
+    publish(progress.ctx.state, progress.ctx.emitter, snap2);
     Ok(if is_final { BuildOutcome::Done } else { BuildOutcome::Retry })
 }
 
-/// Assemble a `TrackerSnapshot` from whatever the cache currently holds. Both phases and the
-/// fully-cached path go through here; the heavy fields are simply empty until phase 2 has
-/// populated the cache, so the phase-1 snapshot naturally carries null/empty stats.
-#[allow(clippy::too_many_arguments)] // cohesive snapshot fields; grouping them would add an
-// unrequested struct for no real gain.
+/// Assemble a `TrackerSnapshot` from whatever the cache currently holds. Every emit — the
+/// progress ones, the final one and the fully-cached path — goes through here; a stat that
+/// has not reached the cache yet is simply absent, and its row says so through `pending`.
+///
+/// `enriched` doubles as the assembler's finality, which is what makes the contract's
+/// invariant hold by construction: an `enriched` snapshot carries no pending flags, so an
+/// absent value on it is settled rather than in flight.
 fn assemble_snapshot(
-    session: &Session,
-    players: &[MatchPlayer],
-    parties: &HashMap<String, String>,
-    own_team: Option<String>,
-    map: Option<MapInfo>,
-    mode: Option<String>,
-    status: AppStatus,
+    parts: &SnapshotParts,
+    cache: &MatchCache,
+    loadouts_fetched: bool,
     enriched: bool,
 ) -> TrackerSnapshot {
     let rows = assemble_players(&AssembleInput {
-        players,
-        names: &session.cache.names,
-        mmr: &session.cache.mmr,
-        parties,
-        updates: &session.cache.updates,
-        recent_stats: &session.cache.recent_stats,
-        skins: &session.cache.skins,
-        static_data: &session.static_data,
-        own_puuid: &session.own_puuid,
-        own_team: own_team.as_deref(),
-        current_season_id: &session.season_id,
-        seasons: &session.seasons,
+        players: parts.players,
+        names: &cache.names,
+        mmr: &cache.mmr,
+        parties: parts.parties,
+        updates: &cache.updates,
+        recent_stats: &cache.recent_stats,
+        skins: &cache.skins,
+        static_data: parts.static_data,
+        own_puuid: parts.own_puuid,
+        own_team: parts.own_team.as_deref(),
+        current_season_id: parts.season_id,
+        seasons: parts.seasons,
+        finality: enriched,
+        loadouts_fetched,
+        ingame: parts.ingame,
     });
     TrackerSnapshot {
-        status,
-        map,
-        mode,
-        own_team,
+        status: parts.status,
+        map: parts.map.clone(),
+        mode: parts.mode.clone(),
+        own_team: parts.own_team.clone(),
         players: rows,
         enriched,
         last_updated: crate::riot::types::now_millis(),
@@ -1210,7 +1343,7 @@ fn inter_request_delay() -> Duration {
     Duration::from_millis(INTER_REQUEST_DELAY_MS)
 }
 
-/// Phase 1 of the two-phase emit: resolve names (batch) + MMR (per player) into the cache,
+/// Phase 1 of the burst: resolve names (batch) + MMR (per player) into the cache,
 /// fetching only the puuids not already cached from a same-match pregame build (HIGH-1
 /// reuse). MMR is the WR source too, so this covers every "free" field. Stale claims and an
 /// unspent rate limit propagate for the shared token refresh (C4/C7); any other single MMR
@@ -1221,12 +1354,15 @@ fn inter_request_delay() -> Duration {
 /// sleep), and now covers the MMR fetches too (LOW: consistency with the spec's per-player
 /// 120 ms). Returns false when a poke arrived while a request was in flight — whatever was
 /// fetched stays cached, so the rebuild resumes rather than redoing it.
+///
+/// The names are the table's first paint, so they are flushed the moment they land; each MMR
+/// then fills its row's rank cells in as it arrives.
 async fn fetch_phase1(
     remote: &RemoteClient,
     gate: &RateLimitGate,
     cache: &mut MatchCache,
     puuids: &[String],
-    rx: &mut mpsc::Receiver<Poke>,
+    progress: &mut Progress<'_, '_>,
 ) -> Result<bool> {
     // Names: one batch call for the puuids we don't already hold.
     let missing_names: Vec<String> = puuids
@@ -1235,10 +1371,13 @@ async fn fetch_phase1(
         .cloned()
         .collect();
     if !missing_names.is_empty() {
-        let Some(fetched) = until_poke(rx, fetch_names(remote, gate, &missing_names)).await else {
+        let Some(fetched) =
+            until_poke(progress.ctx.rx, fetch_names(remote, gate, &missing_names)).await
+        else {
             return Ok(false);
         };
         cache.names.extend(fetched?);
+        progress.publish_progress(cache, true);
     }
 
     // MMR: per player, only the ones missing, spaced between requests.
@@ -1251,13 +1390,15 @@ async fn fetch_phase1(
         if i > 0 {
             tokio::time::sleep(inter_request_delay()).await;
         }
-        let Some(result) = until_poke(rx, with_rate_limit_retry(gate, || remote.mmr(puuid))).await
+        let Some(result) =
+            until_poke(progress.ctx.rx, with_rate_limit_retry(gate, || remote.mmr(puuid))).await
         else {
             return Ok(false);
         };
         match result {
             Ok(v) => {
                 cache.mmr.insert(puuid.clone(), parse_mmr(v));
+                progress.publish_progress(cache, false);
             }
             Err(e) if warrants_token_refresh(&e) => return Err(e),
             Err(_) => { /* private profile / hiccup -> Unranked for this row only */ }
@@ -1266,7 +1407,7 @@ async fn fetch_phase1(
     Ok(true)
 }
 
-/// Phase 2 of the two-phase emit: competitiveupdates (ΔRR + last-5 + recent match ids),
+/// Phase 2 of the burst: competitiveupdates (ΔRR + last-5 + recent match ids),
 /// HS% + KD (throttled + session-cached, both from the same match-details), and — INGAME
 /// only — loadout skins. Only puuids not
 /// already cached are fetched (HIGH-1 reuse of pregame data + resume-after-abort). Between
@@ -1278,6 +1419,9 @@ async fn fetch_phase1(
 /// keeps the cache un-final and retries that player only — never publishing a transient gap
 /// as a settled `enriched` null. The inter-request delay spaces requests only
 /// BETWEEN them (LOW: no trailing sleep, none after a skip/cache-hit).
+///
+/// Each settled group is published as it lands (coalesced), so ΔRR, the last-5 pips, HS%/KD
+/// and the skins reach the table one group at a time instead of all at the end.
 #[allow(clippy::too_many_arguments)] // one caller; the parameters are the phase's inputs.
 async fn fetch_phase2(
     remote: &RemoteClient,
@@ -1288,7 +1432,7 @@ async fn fetch_phase2(
     puuids: &[String],
     ingame: bool,
     match_id: &str,
-    rx: &mut mpsc::Receiver<Poke>,
+    progress: &mut Progress<'_, '_>,
 ) -> Result<Phase2Outcome> {
     // Tracks whether any request has been issued yet, so the 120 ms delay only ever sits
     // *between* two real requests across the whole phase.
@@ -1306,21 +1450,25 @@ async fn fetch_phase2(
         .cloned()
         .collect();
     for puuid in &missing_updates {
-        if drain_pokes(rx) {
+        if drain_pokes(progress.ctx.rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
         if sent_any {
             tokio::time::sleep(inter_request_delay()).await;
         }
         sent_any = true;
-        let Some(result) =
-            until_poke(rx, with_rate_limit_retry(gate, || remote.competitive_updates(puuid))).await
+        let Some(result) = until_poke(
+            progress.ctx.rx,
+            with_rate_limit_retry(gate, || remote.competitive_updates(puuid)),
+        )
+        .await
         else {
             return Ok(Phase2Outcome::Interrupted);
         };
         match result {
             Ok(v) => {
                 cache.updates.insert(puuid.clone(), stats::parse_competitive_updates(v));
+                progress.publish_progress(cache, false);
             }
             Err(Error::BadClaims) => return Err(Error::BadClaims),
             // Transient: leave the entry unset so the retry refetches this player only.
@@ -1334,7 +1482,7 @@ async fn fetch_phase2(
         if cache.recent_stats.contains_key(puuid) {
             continue;
         }
-        if drain_pokes(rx) {
+        if drain_pokes(progress.ctx.rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
         // No history entry at all means the competitiveupdates call above failed — a
@@ -1347,11 +1495,13 @@ async fn fetch_phase2(
         let Some(newest) = newest else {
             // Definitively no recent competitive matches -> HS% is "N/a" and KD is null.
             cache.recent_stats.insert(puuid.clone(), RecentStats::default());
+            progress.publish_progress(cache, false);
             continue;
         };
         // Session cache hit (same newest match) -> reuse, no match-details fetch.
         if let Some(stats) = recent_stats_cache.get(puuid, &newest) {
             cache.recent_stats.insert(puuid.clone(), stats);
+            progress.publish_progress(cache, false);
             continue;
         }
         // Cache miss -> fetch up to N match-details and accumulate this player's hits.
@@ -1374,15 +1524,18 @@ async fn fetch_phase2(
                 }
                 WindowStep::Fetch => {}
             }
-            if drain_pokes(rx) {
+            if drain_pokes(progress.ctx.rx) {
                 return Ok(Phase2Outcome::Interrupted);
             }
             if sent_any {
                 tokio::time::sleep(inter_request_delay()).await;
             }
             sent_any = true;
-            let Some(result) =
-                until_poke(rx, with_rate_limit_retry(gate, || remote.match_details(mid))).await
+            let Some(result) = until_poke(
+                progress.ctx.rx,
+                with_rate_limit_retry(gate, || remote.match_details(mid)),
+            )
+            .await
             else {
                 return Ok(Phase2Outcome::Interrupted);
             };
@@ -1410,21 +1563,27 @@ async fn fetch_phase2(
         let recent = acc.recent_stats();
         recent_stats_cache.put(puuid, &newest, recent);
         cache.recent_stats.insert(puuid.clone(), recent);
+        progress.publish_progress(cache, false);
     }
 
     // Loadout skins: one request per match, INGAME only.
     if ingame && cache.skins.is_empty() {
-        if drain_pokes(rx) {
+        if drain_pokes(progress.ctx.rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
-        let Some(result) =
-            until_poke(rx, with_rate_limit_retry(gate, || remote.coregame_loadouts(match_id))).await
+        let Some(result) = until_poke(
+            progress.ctx.rx,
+            with_rate_limit_retry(gate, || remote.coregame_loadouts(match_id)),
+        )
+        .await
         else {
             return Ok(Phase2Outcome::Interrupted);
         };
         match result {
             Ok(v) => {
                 cache.skins = loadout::parse_loadouts(&v);
+                progress.loadouts_fetched = true;
+                progress.publish_progress(cache, false);
             }
             Err(Error::BadClaims) => return Err(Error::BadClaims),
             Err(_) => partial = true,
@@ -1848,6 +2007,113 @@ mod tests {
         cache.put("p2", "m2", stats);
         assert_eq!(cache.order.len(), RECENT_STATS_CACHE_CAP);
         assert_eq!(cache.get("p2", "m2"), Some(stats));
+    }
+
+    #[test]
+    fn the_first_progress_emit_is_immediate_and_a_burst_after_it_coalesces() {
+        let window = Duration::from_millis(PROGRESS_COALESCE_MS);
+        // The table's first paint is never held back.
+        assert!(should_emit(None, false));
+        // A burst inside the window collapses into the flush that follows it...
+        assert!(!should_emit(Some(Duration::ZERO), false));
+        assert!(!should_emit(Some(window - Duration::from_millis(1)), false));
+        // ...and once it has passed, progress flows again.
+        assert!(should_emit(Some(window), false));
+        assert!(should_emit(Some(window * 10), false));
+        // A phase boundary goes out whatever the window says.
+        assert!(should_emit(None, true));
+        assert!(should_emit(Some(Duration::ZERO), true));
+    }
+
+    #[test]
+    fn the_gate_starts_its_window_only_on_an_emit_it_let_through() {
+        let mut gate = ProgressGate::default();
+        assert!(gate.take(false), "first paint");
+        assert!(!gate.take(false), "inside the window");
+        assert!(gate.take(true), "boundary flush");
+        assert!(!gate.take(false), "the forced emit restarted the window");
+    }
+
+    #[test]
+    fn an_enriched_snapshot_never_carries_a_pending_row() {
+        // The contract's invariant, at its worst case: nothing has been fetched at all.
+        let roster = roster_of("me");
+        let parties = HashMap::new();
+        let static_data = StaticData::default();
+        let seasons: Vec<content::Season> = Vec::new();
+        let parts = SnapshotParts {
+            players: &roster.players,
+            parties: &parties,
+            own_team: roster.own_team.clone(),
+            map: None,
+            mode: None,
+            status: AppStatus::Ingame,
+            static_data: &static_data,
+            own_puuid: "me",
+            season_id: "s1",
+            seasons: &seasons,
+            ingame: true,
+        };
+        let cache = MatchCache::default();
+
+        let settled = assemble_snapshot(&parts, &cache, false, true);
+        assert!(settled.enriched);
+        assert!(settled
+            .players
+            .iter()
+            .all(|r| r.pending == crate::riot::types::PendingStats::default()));
+
+        // The same cache mid-build says every group is still coming.
+        let in_flight = assemble_snapshot(&parts, &cache, false, false);
+        assert!(!in_flight.enriched);
+        assert!(in_flight
+            .players
+            .iter()
+            .all(|r| r.pending.rank && r.pending.skins));
+    }
+
+    #[test]
+    fn giving_up_settles_a_table_that_was_still_loading() {
+        let roster = roster_of("me");
+        let parties = HashMap::new();
+        let static_data = StaticData::default();
+        let seasons: Vec<content::Season> = Vec::new();
+        let parts = SnapshotParts {
+            players: &roster.players,
+            parties: &parties,
+            own_team: roster.own_team.clone(),
+            map: None,
+            mode: None,
+            status: AppStatus::Ingame,
+            static_data: &static_data,
+            own_puuid: "me",
+            season_id: "s1",
+            seasons: &seasons,
+            ingame: true,
+        };
+        let cache = MatchCache::default();
+
+        // What the retry schedule gives up on: the last progress snapshot of a failed build.
+        let mut snap = assemble_snapshot(&parts, &cache, false, false);
+        assert!(snap
+            .players
+            .iter()
+            .any(|r| r.pending != PendingStats::default()));
+
+        assert!(settle_pending(&mut snap));
+        assert!(snap.enriched);
+        assert!(snap
+            .players
+            .iter()
+            .all(|r| r.pending == PendingStats::default()));
+        // ...and it says exactly what the build would have published had it reached the end.
+        assert!(same_content(
+            &snap,
+            &assemble_snapshot(&parts, &cache, false, true)
+        ));
+
+        // An already-settled table changes nothing, so no redundant emit goes out.
+        assert!(!settle_pending(&mut snap));
     }
 
     #[test]

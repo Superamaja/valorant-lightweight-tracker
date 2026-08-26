@@ -253,8 +253,8 @@ mod tests {
         );
         // last-5 only, even though 6 matches were present.
         assert_eq!(h.results.len(), 5);
-        // recent match ids capped at RECENT_MATCHES_FOR_HS (3), newest first.
-        assert_eq!(h.recent_match_ids, vec!["m1", "m2", "m3"]);
+        // recent match ids capped at RECENT_MATCHES_FOR_HS (5), newest first.
+        assert_eq!(h.recent_match_ids, vec!["m1", "m2", "m3", "m4", "m5"]);
         assert_eq!(h.newest_match_id(), Some("m1"));
     }
 

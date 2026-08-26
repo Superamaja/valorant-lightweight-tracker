@@ -15,16 +15,16 @@ const ARTLESS_LABEL: Record<string, string> = { Standard: "Default", Random: "Ra
 export function SkinCell({
   skin,
   weapon,
-  loading,
+  pending,
 }: {
   skin: SkinInfo | null;
   weapon: string;
-  loading: boolean;
+  pending: boolean;
 }) {
   if (!skin) {
     return (
       <div className={CELL}>
-        {loading ? (
+        {pending ? (
           <Skeleton className="h-1.5 w-14 rounded-full" />
         ) : (
           <span className="text-[11px] text-neutral-700" title={`No ${weapon} equipped`}>
