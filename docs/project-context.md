@@ -118,12 +118,18 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    Screenshot workflow note: browser A/B captures should be taken at the app's real
    1000×700 (constrain the page and capture that region; the Chrome window resize tool
    can silently fail on a maximized window).
+11b. ~~**Version/update + last-match rework (2026-08-26, second pass).**~~ **Done,
+   Codex-reviewed, committed:** user picked an A+B combo — the version line + update check
+   now live on the waiting screen (`StatusScreen`), the header carries no version text and
+   shows an `Update: vX.Y.Z` chip only when a check finds one (shared store in
+   `src/lib/updater.ts` + `useUpdateState`; `checkForUpdates` stub still the auto-updater
+   seam). Menus reworked: waiting screen by default, held table behind a "View last match"
+   toggle that resets whenever a live match starts (single-snapshot hold unchanged — no
+   memory growth). Follow-up micro-pass from live use: locked agent picks no longer get the
+   accent-red ring (pregame is allies-only; locked now renders like any normal portrait) and
+   the waiting title went 15px → 18px. README: held-table + party bullets replaced with the
+   tracker.gg link-out bullet.
 11. **Session todo list (2026-08-26, remaining):**
-   - **Version/update UI redesign** — user dislikes the current header `v0.1.0` text next to
-     "6m ago"; rework `VersionBadge` presentation and decide the future update-available look
-     (auto-updater seam). Options from the UI review: (A) move version to the status screen,
-     (B) icon-only header glyph expanding on update-available, (C) divider+dim. **User still
-     undecided — do not implement until they pick.**
    - **Bounded-concurrency match-details fetches** — enrichment fetches match details
      sequentially with a 120ms delay each; the first 45-call burst took 23s wall-clock.
      Two in flight (keeping the 429 gate) could roughly halve initial enrichment time.
