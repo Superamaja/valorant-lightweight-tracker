@@ -77,7 +77,20 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    the only deferred items live in roadmap.md (release-workflow validation, CSP smoke test).
    Two false positives recorded there too (hold-last-match, React 18). Release hold lifted
    pending the auto-updater (see roadmap "Last").
-9. **Open items for later sessions** (user finishes the roadmap there):
+9. ~~**Feature session 2026-08-25 (second).**~~ **Done, all Codex-reviewed clean** (one high
+   finding — terminal-error giveups left cells pending forever — fixed and re-reviewed):
+   incremental stat loading (per-row `pending` flags, coalesced settle-point emission,
+   `enriched` reworked to "all stats settled"; contract in `docs/ipc-contract.md`), chroma
+   skin icons (`CHROMA_SOCKET_ID` pending live verification; static-cache schema guard),
+   HS%/KD window 3 → 5 (burst 41 → 61 requests worst case), peak-act label current-act
+   fallback, and the updater UI (header `VersionBadge` fed by a build-time `__APP_VERSION__`
+   define; `checkForUpdates()` stub in `src/lib/updater.ts` is the auto-updater seam). CSP smoke test dev half passed live (release-shaped `--debug` exe check still
+   pending). **Session closed with everything uncommitted (user choice); live verification
+   of the new features deferred — user will report anything broken in a later session.** A
+   `--debug` exe for the CSP check + live look sits at
+   `src-tauri/target/debug/valorant-lightweight-tracker.exe`. Known pre-existing flaky test:
+   `a_rate_limit_deadline_outlives_the_request_that_earned_it` (Windows Instant granularity).
+10. **Open items for later sessions** (user finishes the roadmap there):
    - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
      browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
      Consider anonymizing names in the JSON first.
@@ -86,10 +99,12 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      then `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the workflow's
      first run on GitHub (never exercised on a real runner).
    - **Still needing live verification**: party dot colours (needs a party lobby — every
-     capture so far was solo), `latam`/`br` shard mapping (needs such an account), flat
-     presence shape, pregame-vs-coregame match-id equality (cache upgrade path), and the
-     full-lobby 41-request stat burst under rate limits in a comp match (captures were
-     Spike Rush).
+     capture so far was solo; if they turn out broken, decide then: fix or strip the dot
+     code), `latam`/`br` shard mapping (needs such an account), flat
+     presence shape, pregame-vs-coregame match-id equality (cache upgrade path), the
+     full-lobby 61-request stat burst under rate limits in a comp match (captures were
+     Spike Rush), the chroma socket uuid (`CHROMA_SOCKET_ID`), and the incremental
+     fill-in behavior in a live lobby.
    - Possible polish noted from the first real-data screenshot: quiet the "Default"/"Default"
      skin text pairs; heavy N/A texture on no-comp-history rows.
 
