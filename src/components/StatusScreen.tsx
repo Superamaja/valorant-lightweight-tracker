@@ -99,13 +99,13 @@ export function StatusScreen({
       <div className="flex max-w-sm flex-col items-center">
         <h2 className="text-[18px] font-medium tracking-wide text-neutral-200">{title}</h2>
         {subtitle && (
-          <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{subtitle}</p>
+          <p className="mt-2 text-[13px] leading-relaxed text-neutral-500">{subtitle}</p>
         )}
         {action && (
           <button
             type="button"
             onClick={action.onClick}
-            className="mt-5 rounded-full border border-edge px-3.5 py-1.5 text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-neutral-200"
+            className="mt-5 rounded-full border border-edge px-3.5 py-1.5 text-[12px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-neutral-200"
           >
             {action.label}
           </button>
