@@ -20,9 +20,38 @@ jobs:
       run:
         shell: pwsh
 
+    env:
+      TAG: ${{ github.ref_name }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate tag format
+        run: |
+          if ($env:TAG -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw "Tag '$env:TAG' is not a release tag. Release tags must be vX.Y.Z (for example v0.2.0)."
+          }
+
+      - name: Verify tag matches the manifest versions
+        run: |
+          $version = $env:TAG.Substring(1)
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          # Anchored to the [package] table so dependency versions can't match.
+          $cargoMatch = [regex]::Match($cargo, '\[package\][^\[]*?\bversion\s*=\s*"([^"]+)"')
+          if (-not $cargoMatch.Success) {
+            throw "Could not find the [package] version in src-tauri/Cargo.toml"
+          }
+          $manifests = [ordered]@{
+            "package.json" = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            "src-tauri/Cargo.toml" = $cargoMatch.Groups[1].Value
+            "src-tauri/tauri.conf.json" = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          }
+          $mismatched = $manifests.GetEnumerator() | Where-Object { $_.Value -ne $version }
+          if ($mismatched) {
+            $detail = ($mismatched | ForEach-Object { "  $($_.Key): $($_.Value)" }) -join "`n"
+            throw "Tag '$env:TAG' expects version $version, but these files disagree (run ``pnpm bump``):`n$detail"
+          }
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -46,26 +75,30 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # `pnpm build` is `tsc && vite build`, so this is the frontend typecheck.
+      - name: Typecheck and build frontend
+        run: pnpm build
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
       # --no-bundle builds the release exe only (no NSIS/MSI installers). The
       # frontend build runs automatically via tauri.conf.json beforeBuildCommand.
       - name: Build release exe
         run: pnpm tauri build --no-bundle
 
-      - name: Stage portable exe
-        id: stage
+      # The asset name carries no version so the file keeps a stable download
+      # URL across releases; the version lives in the tag and release name.
+      - name: Verify portable exe
         run: |
           $exe = "src-tauri/target/release/valorant-lightweight-tracker.exe"
           if (-not (Test-Path $exe)) {
             throw "Expected build output not found: $exe"
           }
-          $asset = "valorant-lightweight-tracker-${{ github.ref_name }}.exe"
-          New-Item -ItemType Directory -Force -Path dist-release | Out-Null
-          Copy-Item $exe "dist-release/$asset"
-          "asset_path=dist-release/$asset" >> $env:GITHUB_OUTPUT
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.stage.outputs.asset_path }}
+          files: src-tauri/target/release/valorant-lightweight-tracker.exe
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Sync the app version across package.json, src-tauri/Cargo.toml ([package]
-// version) and src-tauri/tauri.conf.json. Zero dependencies (plain Node).
+// version), src-tauri/tauri.conf.json and this crate's entry in
+// src-tauri/Cargo.lock. Zero dependencies (plain Node).
 //
 // Usage:
 //   node scripts/bump-version.mjs <x.y.z>     explicit version
 //   node scripts/bump-version.mjs patch|minor|major
 //
-// Refuses to run if the three files currently disagree. Does no git actions.
+// Refuses to run if the four files currently disagree. Does no git actions.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ const paths = {
   packageJson: join(repoRoot, "package.json"),
   cargoToml: join(repoRoot, "src-tauri", "Cargo.toml"),
   tauriConf: join(repoRoot, "src-tauri", "tauri.conf.json"),
+  cargoLock: join(repoRoot, "src-tauri", "Cargo.lock"),
 };
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -50,10 +52,34 @@ function readCargoVersion(path) {
   return match[2];
 }
 
+const CARGO_PACKAGE_NAME = /\[package\][^\[]*?\n\s*name\s*=\s*"([^"]+)"/;
+
+function readCargoName(path) {
+  const raw = readFileSync(path, "utf8");
+  const match = raw.match(CARGO_PACKAGE_NAME);
+  if (!match) fail(`could not find [package] name in ${path}`);
+  return match[1];
+}
+
+// This crate's own entry in the lockfile, anchored on its `name` line so no
+// dependency's version can be caught by the replace.
+const crateName = readCargoName(paths.cargoToml);
+const CARGO_LOCK_VERSION = new RegExp(
+  `(name\\s*=\\s*"${crateName}"\\s*\\n\\s*version\\s*=\\s*")([^"]+)(")`,
+);
+
+function readLockVersion(path) {
+  const raw = readFileSync(path, "utf8");
+  const match = raw.match(CARGO_LOCK_VERSION);
+  if (!match) fail(`could not find the "${crateName}" package in ${path}`);
+  return match[2];
+}
+
 const current = {
   packageJson: readJsonVersion(paths.packageJson),
   cargoToml: readCargoVersion(paths.cargoToml),
   tauriConf: readJsonVersion(paths.tauriConf),
+  cargoLock: readLockVersion(paths.cargoLock),
 };
 
 // --- validate agreement ----------------------------------------------------
@@ -99,7 +125,7 @@ if (newVersion === currentVersion) {
   fail(`version is already ${newVersion}; nothing to do`);
 }
 
-// --- write the three files -------------------------------------------------
+// --- write the four files --------------------------------------------------
 
 function writeJsonVersion(path, version) {
   const data = JSON.parse(readFileSync(path, "utf8"));
@@ -107,20 +133,22 @@ function writeJsonVersion(path, version) {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
 }
 
-function writeCargoVersion(path, version) {
+function writeTomlVersion(path, pattern, version) {
   const raw = readFileSync(path, "utf8");
   const updated = raw.replace(
-    CARGO_PACKAGE_VERSION,
+    pattern,
     (_m, before, _old, after) => `${before}${version}${after}`,
   );
   writeFileSync(path, updated);
 }
 
 writeJsonVersion(paths.packageJson, newVersion);
-writeCargoVersion(paths.cargoToml, newVersion);
+writeTomlVersion(paths.cargoToml, CARGO_PACKAGE_VERSION, newVersion);
 writeJsonVersion(paths.tauriConf, newVersion);
+writeTomlVersion(paths.cargoLock, CARGO_LOCK_VERSION, newVersion);
 
 console.log(`bump-version: ${currentVersion} -> ${newVersion}`);
 console.log(`  package.json`);
 console.log(`  src-tauri/Cargo.toml`);
 console.log(`  src-tauri/tauri.conf.json`);
+console.log(`  src-tauri/Cargo.lock`);
