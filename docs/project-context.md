@@ -109,7 +109,20 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      "6m ago"; rework `VersionBadge` presentation and decide the future update-available look
      (auto-updater seam). Pending user input: tucked away vs visible-but-restyled.
    - **Pregame poll: stop after all 5 allies locked** (safe per investigation above).
+     Footnote from the 2026-08-26 log analysis: while touching this code, also suppress the
+     duplicated immediate 404 retry inside each transition backoff cycle (saves ~6 requests
+     per pregame→ingame race; too small to stand alone).
    - **Pregame poll: cache the match id** — it can't change mid-pregame; halves poll cost.
+     Log-quantified 2026-08-26: pregame ticks were 90 of 297 requests (30%) in a real run
+     (`~/Downloads/log.txt`, keep as before/after benchmark).
+   - **Unknown queue id leaks raw into the UI** — a real run showed `mode=fortcollins`
+     (`game_mode_name` in `src-tauri/src/riot/constants.rs` falls through to the raw queue
+     id, and that string reaches the UI). Add the mapping or a friendlier fallback.
+   - **Bounded-concurrency match-details fetches** — enrichment fetches match details
+     sequentially with a 120ms delay each; the first 45-call burst took 23s wall-clock.
+     Two in flight (keeping the 429 gate) could roughly halve initial enrichment time.
+     **Gated on** first live-verifying the comp-match rate-limit burst (open item below) —
+     the sequential pacing is deliberate 429 caution and no run has exercised a 429 yet.
    - **Doc fix**: `docs/backend-spec.md` "Pregame poll tick" section says "one local pregame
      GET per second"; actually two remote GLZ requests.
 12. **Open items for later sessions** (user finishes the roadmap there):
