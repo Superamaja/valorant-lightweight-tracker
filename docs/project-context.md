@@ -169,9 +169,17 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      version-free exe asset name. Review fix: `pnpm bump` now also rewrites the app's
      entry in `Cargo.lock` (four files, all in the consistency check) so the `--locked`
      gate survives a bump. `docs/release.md` updated.
-   - **Auto-updater plan drafted** (custom rename-dance updater against GitHub releases/latest,
-     sha256 asset for integrity, user-initiated install via the existing chip) — Codex plan
-     review pending; implementation not started.
+   - **Auto-updater built** (`feat(release)`, Codex plan review "sound, no blockers" +
+     code review: 1 high / 3 med / 1 low all fixed, re-reviewed clean): `check_update` /
+     `apply_update` in `src-tauri/src/updater.rs` — GitHub releases/latest (unauthenticated,
+     public repo required), strictly-newer version gate at install time, sha256-verified
+     streamed download (sha2 was already in the lock via Tauri tooling — no new packages),
+     checked rename-dance swap with rollback (distinct "stranded as .exe.old" error),
+     detached relaunch, `.exe.old` cleanup on start. Workflow publishes the `.sha256`
+     asset. UI: header chip installs (retry + `installError` on failure), check/install
+     mutually exclusive. Contract in `docs/ipc-contract.md`; user flow in `docs/release.md`.
+     **Not yet live-tested end-to-end — needs two real releases to exercise an actual
+     update.**
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
