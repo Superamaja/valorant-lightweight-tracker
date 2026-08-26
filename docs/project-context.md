@@ -105,9 +105,30 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    websocket poke catches pregame→ingame independently of the tick — not yet implemented,
    see the todo list below.
 11. **Session todo list (2026-08-26, not yet implemented):**
+   - **[PRIORITY 1] UI polish batch** (user-approved subset of the 2026-08-26 Opus UI
+     review; rejected findings are NOT to be revisited):
+     - Row plate: end the team-tint gradient at a faint constant instead of transparent so
+       rows keep definition across the stat cluster. **User undecided — implement behind an
+       easy toggle/screenshot pass and show before/after first.**
+     - Move Vandal/Phantom columns to the end (after ΔRR). Skin art keeps normal opacity
+       (user rejected the 80% dim).
+     - Rank icon larger, peak icon one step smaller (stays full-color). Agent portrait
+       stays 40px (user: current size is good).
+     - `YOU` badge becomes yellow. Enemy red stays exactly as-is (user likes it).
+     - Hide the "Xm ago" age while live/in-match; show only for held last-match tables or
+       genuine staleness. (The "7h ago next to In match" capture was a JSON replay artifact.)
+     - Unranked: icon alone, drop the stray em-dash.
+     - Party indicator: small vertical bar rail instead of the 6px dot (still pending a
+       live party capture to verify colors at all).
+     - Rejected by user (do not implement): pip opacity/half-height rework (#4), numeric
+       right-alignment (#7 — user disputes the finding), empty-cell dash unification (#9 —
+       user disputes), last-match table dimming (#11), self-row ring removal (#12), outlier
+       stat weighting (#13).
    - **Version/update UI redesign** — user dislikes the current header `v0.1.0` text next to
      "6m ago"; rework `VersionBadge` presentation and decide the future update-available look
-     (auto-updater seam). Pending user input: tucked away vs visible-but-restyled.
+     (auto-updater seam). Options from the UI review: (A) move version to the status screen,
+     (B) icon-only header glyph expanding on update-available, (C) divider+dim. **User still
+     undecided — do not implement until they pick.**
    - **Pregame poll: stop after all 5 allies locked** (safe per investigation above).
      Footnote from the 2026-08-26 log analysis: while touching this code, also suppress the
      duplicated immediate 404 retry inside each transition backoff cycle (saves ~6 requests
