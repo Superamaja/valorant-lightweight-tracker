@@ -55,7 +55,7 @@ export function NameCell({ player }: { player: PlayerRow }) {
       )}
 
       {player.isSelf && (
-        <span className="shrink-0 rounded-sm bg-accent/15 px-1 py-px text-[9px] font-semibold tracking-wider text-accent">
+        <span className="shrink-0 rounded-sm bg-amber-300/15 px-1 py-px text-[9px] font-semibold tracking-wider text-amber-300">
           YOU
         </span>
       )}

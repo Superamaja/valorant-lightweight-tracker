@@ -18,7 +18,7 @@ The user's main gripe with vRY's TUI is text ranks. Every place an image exists 
 - Single window, single screen. No tabs/navigation in v1. The player table IS the app.
 - **Header strip:** map name + mode, app-state chip ("Waiting for match" / "Agent select" / "In match") that doubles as the health indicator, subtle "last updated" text.
 - **Main region:** table split into two team blocks — **user's team ALWAYS first and ALWAYS blue** (enemy second, red), regardless of Riot's internal Red/Blue team ids (user dislikes vRY using raw API order/colors). The backend guarantees this ordering in players[] (ally block first, self first within it); the UI colors only by `isAlly`, never by the raw team id. Subtle tinted accents, not loud fills.
-- **Row, left→right:** agent portrait · name#tag · current rank icon (+RR) · peak rank icon (smaller, muted) · account level. Party members marked with matching dot color or thin bracket.
+- **Row, left→right:** agent portrait · name#tag · current rank icon (+RR) · peak rank icon (smaller, full colour) · account level. Party members marked with a matching colour bar. (Superseded in detail by the revisions below.)
 
 ## Style
 
@@ -82,9 +82,9 @@ Decisions taken while building, beyond the baseline above:
   before the field existed must read as settled, not as an all-skeleton table.
 - **`TableLayout.loading` is gone**, and nothing keys off `snapshot.enriched`: it is a
   whole-snapshot summary, not a per-cell gate.
-- **Column order** extends the baseline row for the phase-2 columns: agent · name · Vandal ·
-  Phantom · rank+RR · peak · HS% · WR · last-5 pips · ΔRR · level (skins sit between name and
-  rank; level moved to the end).
+- **Column order** extends the baseline row for the phase-2 columns: agent · name · rank+RR ·
+  peak · HS% · KD · WR · last-5 pips · ΔRR · Vandal · Phantom (revision 3 moved the skins to
+  the end; level moved off the row entirely, see revision 2).
 - **Level is hidden for incognito players** (the contract says it is withheld; the backend
   only withholds it for the separate "hide my level" flag, so the UI enforces it).
 - **Colour budget**: coral accent + neutrals, ally blue / enemy red, and desaturated
@@ -107,6 +107,26 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
 - **HS% scope labeled**: header/tooltip says it covers the last 5 competitive matches (backend constant; changeable).
 - **Rows slightly thicker** so the agent portrait can be larger and carry the level badge.
 - Sizing must be verified against an emulated 10-player lobby at 1000x700 (no horizontal overflow, no scrolling), fixture removed after.
+
+## Revision 3 (polish pass, 2026-08-25)
+
+- **Column order**: identity → rank → stats → skins. Vandal and Phantom now sit after ΔRR at
+  the right edge; skin art keeps its opacity. Vandal carries the wider floor of the two, since
+  it is the column that meets the stat cluster.
+- **Row plate**: the team tint fades to a faint constant instead of to transparent, so a row
+  keeps its shape across the stat columns. `lib/table.ts` holds the A/B: `ROW_PLATE` points at
+  `ROW_PLATE_ON` (`to-white/[0.015]`) or `ROW_PLATE_OFF` (`to-transparent`) — one line.
+- **Rank sizes**: current rank icon `h-8`, peak `h-6`, peak still full colour. The agent
+  portrait is unchanged.
+- **Unranked** shows the rank icon alone; the em-dash that stood in for RR is gone, and the
+  rank name stays as the tooltip.
+- **`YOU` badge is amber**, not the coral accent, so it does not read as another accent
+  element. Enemy red is untouched.
+- **Party marker is a thin vertical bar** (`w-0.5 h-6`) rather than a dot, same palette colour
+  and same show-only-when-in-a-party rule.
+- **Snapshot age is hidden while live.** The header's "Xm ago" appears only on the held
+  last-match table or once a live snapshot passes 90s without a refresh — a healthy live match
+  refreshes itself, so the age is noise.
 
 ## Version / updater affordance (2026-08-25)
 

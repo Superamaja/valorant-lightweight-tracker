@@ -17,13 +17,22 @@ const CONNECTING = { label: "Starting", dot: "bg-neutral-600", pulse: true };
 /** Shown while a finished match's table is still up: the rows are history, not live. */
 const LAST_MATCH = { label: "Last match", dot: "bg-neutral-600", pulse: false };
 
-function LastUpdated({ at }: { at: number }) {
+/** How long a live snapshot may go unrefreshed before its age is worth showing. */
+const STALE_MS = 90_000;
+
+/**
+ * Snapshot age. A live match refreshes itself, so the age is noise there and only appears
+ * once the feed has gone quiet; a held last-match table always says how old it is.
+ */
+function LastUpdated({ at, held }: { at: number; held: boolean }) {
   const [, tick] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  if (!held && Date.now() - at < STALE_MS) return null;
 
   return (
     <span
@@ -142,7 +151,7 @@ export function Header({
             />
             {chip.label}
           </span>
-          {snapshot && <LastUpdated at={snapshot.lastUpdated} />}
+          {snapshot && <LastUpdated at={snapshot.lastUpdated} held={lastMatch} />}
           <VersionBadge />
         </div>
       </div>

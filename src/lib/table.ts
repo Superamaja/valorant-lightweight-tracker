@@ -31,15 +31,9 @@ export const HS_SCOPE = `last ${HS_MATCH_WINDOW} competitive matches`;
  * breathes rather than staying pinned at its floor.
  */
 const COLUMNS: Column[] = [
-  { key: "party", label: "", width: "8px" },
+  { key: "party", label: "", width: "10px" },
   { key: "agent", label: "", width: "44px" },
   { key: "name", label: "Player", width: "minmax(120px,3fr)", left: true },
-  // Skin art is ~4.3:1, so in a 24px-tall cell its width always wins and it fills whatever
-  // track it is given. `SKIN_ART_WIDTH` caps it instead, and the leftover becomes the margin
-  // that keeps the guns off the name and off the rank icon. Phantom's floor is the wider of
-  // the two because it is the one that butts up against the rank column.
-  { key: "vandal", label: "Vandal", width: "minmax(96px,1fr)" },
-  { key: "phantom", label: "Phantom", width: "minmax(108px,1fr)" },
   { key: "rank", label: "Rank", width: "minmax(92px,1fr)", left: true },
   { key: "peak", label: "Peak", width: "minmax(78px,1fr)", left: true },
   { key: "hs", label: "HS%", width: "minmax(46px,1fr)", hint: `Headshot % over the ${HS_SCOPE}` },
@@ -47,6 +41,12 @@ const COLUMNS: Column[] = [
   { key: "wr", label: "WR", width: "minmax(62px,1fr)" },
   { key: "recent", label: "Last 5", width: "minmax(56px,1fr)" },
   { key: "delta", label: "ΔRR", width: "minmax(46px,1fr)" },
+  // Skin art is ~4.3:1, so in a 24px-tall cell its width always wins and it fills whatever
+  // track it is given. `SKIN_ART_WIDTH` caps it instead, and the leftover becomes the margin
+  // that keeps the guns off the ΔRR numbers and off each other. Vandal's floor is the wider
+  // of the two because it is the one that butts up against the stat cluster.
+  { key: "vandal", label: "Vandal", width: "minmax(108px,1fr)" },
+  { key: "phantom", label: "Phantom", width: "minmax(96px,1fr)" },
 ];
 
 /**
@@ -84,6 +84,15 @@ export type TeamSide = "ally" | "enemy";
  * Team tints. Ally is always blue and enemy always red, keyed off `isAlly` — never off the
  * raw Riot team id.
  */
+/**
+ * Where a row's team tint lands at its right edge. `ROW_PLATE_ON` leaves a faint plate under
+ * the stat columns so the row keeps its shape all the way across; `ROW_PLATE_OFF` fades it to
+ * nothing. Point `ROW_PLATE` at the other one to switch every row.
+ */
+export const ROW_PLATE_ON = "to-white/[0.015]";
+export const ROW_PLATE_OFF = "to-transparent";
+export const ROW_PLATE = ROW_PLATE_ON;
+
 export const TEAM_TINT: Record<TeamSide, { dot: string; rule: string; row: string }> = {
   ally: {
     dot: "bg-ally",
