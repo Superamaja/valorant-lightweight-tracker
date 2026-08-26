@@ -89,7 +89,7 @@ export type TeamSide = "ally" | "enemy";
  * the stat columns so the row keeps its shape all the way across; `ROW_PLATE_OFF` fades it to
  * nothing. Point `ROW_PLATE` at the other one to switch every row.
  */
-export const ROW_PLATE_ON = "to-white/[0.015]";
+export const ROW_PLATE_ON = "to-white/[0.025]";
 export const ROW_PLATE_OFF = "to-transparent";
 export const ROW_PLATE = ROW_PLATE_ON;
 
