@@ -180,6 +180,25 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      mutually exclusive. Contract in `docs/ipc-contract.md`; user flow in `docs/release.md`.
      **Not yet live-tested end-to-end — needs two real releases to exercise an actual
      update.**
+11e. ~~**Release day (2026-08-26, fourth pass).**~~ **Done, committed + pushed:**
+   - **v0.1.0 shipped.** First-ever real workflow run went green end to end (10m37s, all
+     gates, both assets). Release: repo Releases page; run link in roadmap "Last".
+   - **Changelog-driven release notes** (Codex-reviewed clean): `CHANGELOG.md` at the
+     repo root, workflow gate fails a tag with no matching section, section published as
+     the Release description (auto commit list appended). v0.1.0's release body was
+     retro-filled. Convention: Claude does version bumps and writes the plain-English
+     entry — recorded in CLAUDE.md (moved from local memory so it travels across
+     machines, user request).
+   - CLAUDE.md also gained the commit-after-every-change convention (same portability
+     reason).
+11f. **Handoff (end of 2026-08-26 sessions):**
+   - **Next release (v0.1.1+) is the auto-updater's first end-to-end test** — the swap
+     path has never run against a real newer release. Flow: CHANGELOG.md entry ->
+     `pnpm bump patch` -> commit -> tag -> push.
+   - Workflow actions target deprecated Node 20 (checkout@v4, setup-node@v4,
+     pnpm/action-setup@v4, action-gh-release@v2) — bump majors when convenient.
+   - Open verification items unchanged from item 12 + the two-lane fetch and presence
+     grace next time the user plays with a debug build.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
