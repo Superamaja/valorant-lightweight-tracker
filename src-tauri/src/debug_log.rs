@@ -10,7 +10,8 @@
 //! swallowed tokens would leave it unused. Inline the expression into the macro call instead,
 //! or gate the binding with `#[cfg(debug_assertions)]`.
 
-/// Log one line under `category` (`state`, `rebuild`, `net`, `enrich`, `ws`, `conn`).
+/// Log one line under `category` (`state`, `rebuild`, `net`, `enrich`, `presence`, `ws`,
+/// `conn`).
 #[cfg(debug_assertions)]
 macro_rules! vlt_log {
     ($category:expr, $($arg:tt)*) => {

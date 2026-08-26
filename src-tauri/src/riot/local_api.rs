@@ -56,6 +56,7 @@ impl LocalClient {
         let status = resp.status();
         let body: Value = resp.json().await.unwrap_or(Value::Null);
         if is_not_ready(&body) || status.as_u16() == 404 {
+            vlt_log!("presence", "local {path} not ready (status {})", status.as_u16());
             return Err(Error::NotReady);
         }
         if !status.is_success() {

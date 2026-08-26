@@ -76,6 +76,8 @@ The number is seconds since the first line. Categories:
   backoffs armed and waited out.
 - `enrich` — what each phase set out to fetch, cache hits, the loadout/chroma summary, and what
   a partial pass left missing.
+- `presence` — why a rebuild found the local presence unusable: own presence missing from the
+  roster, its `private` blob still empty, or the local endpoint answering "not ready".
 - `ws` / `conn` — websocket connect/close/reconnect, and the session lifecycle: lockfile found,
   session up, token refreshes, connection lost.
 

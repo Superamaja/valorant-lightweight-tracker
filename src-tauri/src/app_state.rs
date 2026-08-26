@@ -18,6 +18,7 @@ use crate::riot::static_data::{self, StaticData};
 use crate::riot::stats::{self, MatchContribution, MatchTotals, RecentStats, RrHistory};
 use crate::riot::types::{AppStatus, MapInfo, PendingStats, SessionLoopState, TrackerSnapshot};
 use crate::riot::websocket::Poke;
+use futures_util::future::join_all;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -415,6 +416,9 @@ struct Session {
     match_details: MatchDetailsCache,
     /// The backoff a 429 imposed, honored by every remote call for the rest of the session.
     rate_limit: RateLimitGate,
+    /// Consecutive builds that ended in `NotReady`, which is what the waiting screen is held
+    /// back on while a match is on screen (see `not_ready_publishes`).
+    not_ready_streak: u32,
 }
 
 /// Per-match cache of the expensive per-player lookups. Keyed by match id AND whether the
@@ -614,6 +618,41 @@ fn window_step(
     }
 }
 
+/// What one player's HS%/KD window needs before any request goes out.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WindowPlan {
+    /// The totals the already-parsed matches of the window contribute.
+    cached: MatchTotals,
+    /// Whether any of its matches is already known to be unavailable this pass.
+    any_failed: bool,
+    /// The ids still to download, each listed once.
+    to_fetch: Vec<String>,
+}
+
+/// Resolve a whole window against the caches up front, so the downloads left over can be
+/// dispatched in parallel. The ids are deduplicated here: two lanes must never be sent after
+/// the same match, which would both spend a request twice and double-count its totals. Pure.
+fn plan_window(
+    cache: &MatchDetailsCache,
+    failed: &HashSet<String>,
+    match_ids: &[String],
+    puuid: &str,
+) -> WindowPlan {
+    let mut plan = WindowPlan::default();
+    for match_id in match_ids {
+        match window_step(cache, failed, match_id, puuid) {
+            WindowStep::Cached(totals) => plan.cached.add(totals),
+            WindowStep::Failed => plan.any_failed = true,
+            WindowStep::Fetch => {
+                if !plan.to_fetch.iter().any(|held| held == match_id) {
+                    plan.to_fetch.push(match_id.clone());
+                }
+            }
+        }
+    }
+    plan
+}
+
 /// How many parsed matches the session keeps. One full lobby's HS%/KD window spans at most
 /// `10 * RECENT_MATCHES_FOR_HS` = 50 matches, so this covers a lobby plus its overlap with the
 /// next one; past that the oldest entry goes.
@@ -753,6 +792,7 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
         recent_stats_cache: RecentStatsCache::default(),
         match_details: MatchDetailsCache::default(),
         rate_limit: RateLimitGate::default(),
+        not_ready_streak: 0,
     })
 }
 
@@ -973,20 +1013,59 @@ fn warrants_token_refresh(err: &Error) -> bool {
     matches!(err, Error::BadClaims | Error::RateLimited(_))
 }
 
+/// How many consecutive `NotReady` builds a live match absorbs before the waiting screen
+/// replaces its table. Own presence goes missing (or arrives with an empty `private` blob) for
+/// a beat mid-match often enough that publishing on the first one flashes the waiting screen at
+/// a player whose match is still running; the retry schedule re-polls within a second, so two
+/// suppressed attempts cover the gap.
+const NOT_READY_GRACE: u32 = 2;
+
+/// Whether a `NotReady` build publishes the waiting screen, given the status already on screen
+/// and how many `NotReady` builds ran before this one. A live match keeps its table for the
+/// grace window; anything else (menus, not running) has no table worth protecting and says so
+/// at once. Pure.
+fn not_ready_publishes(published: AppStatus, streak: u32) -> bool {
+    !matches!(published, AppStatus::Pregame | AppStatus::Ingame) || streak >= NOT_READY_GRACE
+}
+
+/// The streak after a build: another consecutive `NotReady` extends it, anything else — a
+/// success, a different failure — clears it, so the grace is spent only on an unbroken run.
+/// Pure.
+fn next_not_ready_streak(streak: u32, not_ready: bool) -> u32 {
+    if not_ready {
+        streak.saturating_add(1)
+    } else {
+        0
+    }
+}
+
 /// Build a snapshot and publish it, routing a stale-token failure through a token refresh +
 /// one retry (C7) and NotReady through a "Loading..." placeholder. Shared by the initial paint
 /// and the event loop so both handle token expiry identically. Every path that did NOT publish
 /// a table reports `Retry` so the caller schedules a bounded rebuild rather than
 /// depending on an event that may never arrive.
 async fn build_and_publish(session: &mut Session, ctx: &mut BuildCtx<'_>) -> BuildOutcome {
-    match build_snapshot(session, ctx).await {
+    let built = build_snapshot(session, ctx).await;
+    let streak = session.not_ready_streak;
+    session.not_ready_streak =
+        next_not_ready_streak(streak, matches!(built, Err(Error::NotReady)));
+    match built {
         Ok(outcome) => outcome,
         Err(Error::NotReady) => {
-            publish(
-                ctx.state,
-                ctx.emitter,
-                TrackerSnapshot::not_running(Some("Loading...".into())),
-            );
+            if not_ready_publishes(ctx.state.status(), streak) {
+                publish(
+                    ctx.state,
+                    ctx.emitter,
+                    TrackerSnapshot::not_running(Some("Loading...".into())),
+                );
+            } else {
+                vlt_log!(
+                    "rebuild",
+                    "presence not ready ({}/{}), keeping the live table",
+                    streak + 1,
+                    NOT_READY_GRACE
+                );
+            }
             BuildOutcome::Retry
         }
         // Exactly one refresh per build attempt: the retry's own errors fall through to
@@ -1029,8 +1108,23 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
     // hasn't published our presence yet — surface NotReady (poll again) rather than
     // defaulting to a Menus render (C10).
     let info = match own {
-        Some(p) => presence::info_for(p)?,
-        None => return Err(Error::NotReady),
+        Some(p) => match presence::info_for(p) {
+            Ok(info) => info,
+            Err(err) => {
+                vlt_log!(
+                    "presence",
+                    "own presence {} unreadable: {:?} (private blob empty={})",
+                    crate::debug_log::short(&p.puuid),
+                    err,
+                    p.private.as_deref().unwrap_or("").is_empty()
+                );
+                return Err(err);
+            }
+        },
+        None => {
+            vlt_log!("presence", "own presence absent from {} presences", presences.len());
+            return Err(Error::NotReady);
+        }
     };
 
     // Once connected, the client version from own presence is authoritative over the
@@ -1426,11 +1520,13 @@ struct RateLimitGate {
 }
 
 impl RateLimitGate {
-    /// How much of the deadline is left (`None` = free to send). Reaching it clears it.
+    /// How much of the deadline is left (`None` = free to send). Reaching it clears it — a
+    /// deadline exactly on `now` is spent, not a zero-length sleep still to serve.
     fn wait(&self) -> Option<Duration> {
         let mut until = self.until.lock().unwrap();
         let deadline = (*until)?;
-        let remaining = deadline.checked_duration_since(Instant::now());
+        let remaining =
+            deadline.checked_duration_since(Instant::now()).filter(|left| !left.is_zero());
         if remaining.is_none() {
             *until = None;
         }
@@ -1462,17 +1558,11 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
-    if let Some(owed) = gate.wait() {
-        vlt_log!("net", "holding {}ms for earlier 429", owed.as_millis());
-        tokio::time::sleep(owed).await;
-    }
+    await_rate_limit(gate).await;
     match f().await {
         Err(Error::RateLimited(retry_after)) => {
             arm_rate_limit(gate, retry_after);
-            if let Some(owed) = gate.wait() {
-                vlt_log!("net", "holding {}ms for earlier 429", owed.as_millis());
-                tokio::time::sleep(owed).await;
-            }
+            await_rate_limit(gate).await;
             match f().await {
                 // The retry's own Retry-After still binds later requests, even though no
                 // third attempt is made here.
@@ -1484,6 +1574,16 @@ where
             }
         }
         other => other,
+    }
+}
+
+/// Wait out everything the gate owes, re-asking after each sleep: the other lane can arm or
+/// extend the deadline while this one sleeps, and sending inside that fresh window is exactly
+/// what the gate is there to prevent.
+async fn await_rate_limit(gate: &RateLimitGate) {
+    while let Some(owed) = gate.wait() {
+        vlt_log!("net", "holding {}ms for earlier 429", owed.as_millis());
+        tokio::time::sleep(owed).await;
     }
 }
 
@@ -1519,6 +1619,12 @@ async fn fetch_names(
 fn inter_request_delay() -> Duration {
     Duration::from_millis(INTER_REQUEST_DELAY_MS)
 }
+
+/// How many match-details downloads a player's HS%/KD window sends at once. They are the
+/// burst's bulk (~45 requests for a full comp lobby) and its slowest calls, so two lanes
+/// roughly halve the wall clock. The 429 gate is what keeps the higher rate safe: both lanes
+/// consult it before sending and arm it on a limit, so an armed backoff holds them both.
+const MATCH_DETAILS_CONCURRENCY: usize = 2;
 
 /// Phase 1 of the burst: resolve names (batch) + MMR (per player) into the cache,
 /// fetching only the puuids not already cached from a same-match pregame build (HIGH-1
@@ -1596,8 +1702,10 @@ async fn fetch_phase1(
 /// finishes the missing work. BadClaims propagates for the shared refresh; a transient
 /// per-player failure leaves that player's entry UNSET and reports `Partial`, so the caller
 /// keeps the cache un-final and retries that player only — never publishing a transient gap
-/// as a settled `enriched` null. The inter-request delay spaces requests only
-/// BETWEEN them (LOW: no trailing sleep, none after a skip/cache-hit).
+/// as a settled `enriched` null. The inter-request delay spaces dispatches only
+/// BETWEEN them (LOW: no trailing sleep, none after a skip/cache-hit); one dispatch is a
+/// single competitiveupdates/loadouts call, or a batch of up to `MATCH_DETAILS_CONCURRENCY`
+/// match-details sent together.
 ///
 /// Each settled group is published as it lands (coalesced), so ΔRR, the last-5 pips, HS%/KD
 /// and the skins reach the table one group at a time instead of all at the end.
@@ -1613,8 +1721,8 @@ async fn fetch_phase2(
     match_id: &str,
     progress: &mut Progress<'_, '_>,
 ) -> Result<Phase2Outcome> {
-    // Tracks whether any request has been issued yet, so the 120 ms delay only ever sits
-    // *between* two real requests across the whole phase.
+    // Tracks whether anything has been dispatched yet, so the 120 ms delay only ever sits
+    // *between* two real dispatches across the whole phase.
     let mut sent_any = false;
     // Set by any transient failure — the whole pass is then not final.
     let mut partial = false;
@@ -1690,20 +1798,10 @@ async fn fetch_phase2(
             .get(puuid)
             .map(|h| h.recent_match_ids.clone())
             .unwrap_or_default();
-        let mut acc = MatchTotals::default();
-        let mut any_failed = false;
-        for mid in &match_ids {
-            match window_step(match_details, &failed_matches, mid, puuid) {
-                WindowStep::Cached(totals) => {
-                    acc.add(totals);
-                    continue;
-                }
-                WindowStep::Failed => {
-                    any_failed = true;
-                    continue;
-                }
-                WindowStep::Fetch => {}
-            }
+        let plan = plan_window(match_details, &failed_matches, &match_ids, puuid);
+        let mut acc = plan.cached;
+        let mut any_failed = plan.any_failed;
+        for batch in plan.to_fetch.chunks(MATCH_DETAILS_CONCURRENCY) {
             if drain_pokes(progress.ctx.rx) {
                 return Ok(Phase2Outcome::Interrupted);
             }
@@ -1711,24 +1809,24 @@ async fn fetch_phase2(
                 tokio::time::sleep(inter_request_delay()).await;
             }
             sent_any = true;
-            let Some(result) = until_poke(
-                progress.ctx.rx,
-                with_rate_limit_retry(gate, || remote.match_details(mid)),
-            )
-            .await
-            else {
+            let downloads = batch
+                .iter()
+                .map(|mid| with_rate_limit_retry(gate, || remote.match_details(mid)));
+            let Some(results) = until_poke(progress.ctx.rx, join_all(downloads)).await else {
                 return Ok(Phase2Outcome::Interrupted);
             };
-            match result {
-                Ok(v) => {
-                    let contribution = stats::match_contribution(&v);
-                    acc.add(contribution.get(puuid).copied().unwrap_or_default());
-                    match_details.put(mid, contribution);
-                }
-                Err(Error::BadClaims) => return Err(Error::BadClaims),
-                Err(_) => {
-                    any_failed = true;
-                    failed_matches.insert(mid.clone());
+            for (mid, result) in batch.iter().zip(results) {
+                match result {
+                    Ok(v) => {
+                        let contribution = stats::match_contribution(&v);
+                        acc.add(contribution.get(puuid).copied().unwrap_or_default());
+                        match_details.put(mid, contribution);
+                    }
+                    Err(Error::BadClaims) => return Err(Error::BadClaims),
+                    Err(_) => {
+                        any_failed = true;
+                        failed_matches.insert(mid.clone());
+                    }
                 }
             }
         }
@@ -1850,6 +1948,40 @@ mod tests {
         assert!(delays.windows(2).all(|w| w[1] > w[0]));
         assert_eq!(retry_delay(RETRY_BACKOFF_MS.len()), None);
         assert_eq!(retry_delay(usize::MAX), None);
+    }
+
+    #[test]
+    fn a_live_match_absorbs_a_short_presence_gap() {
+        // Own presence dropping out for a beat mid-match must not flash the waiting screen...
+        for streak in 0..NOT_READY_GRACE {
+            assert!(!not_ready_publishes(AppStatus::Ingame, streak), "streak {streak}");
+            assert!(!not_ready_publishes(AppStatus::Pregame, streak), "streak {streak}");
+        }
+        // ...but a gap that outlasts the grace is a real state change and gets published.
+        assert!(not_ready_publishes(AppStatus::Ingame, NOT_READY_GRACE));
+        assert!(not_ready_publishes(AppStatus::Pregame, NOT_READY_GRACE + 1));
+    }
+
+    #[test]
+    fn the_presence_grace_is_spent_only_on_an_unbroken_run() {
+        // Consecutive gaps walk the streak up to the point where the placeholder goes out...
+        let mut streak = 0;
+        for _ in 0..NOT_READY_GRACE {
+            assert!(!not_ready_publishes(AppStatus::Ingame, streak));
+            streak = next_not_ready_streak(streak, true);
+        }
+        assert!(not_ready_publishes(AppStatus::Ingame, streak));
+        // ...and any build that got through restores the full grace for the next gap.
+        assert_eq!(next_not_ready_streak(streak, false), 0);
+        assert!(!not_ready_publishes(AppStatus::Ingame, next_not_ready_streak(streak, false)));
+    }
+
+    #[test]
+    fn a_state_with_no_table_reports_not_ready_at_once() {
+        // Nothing on screen is worth protecting outside a match, so the placeholder goes out
+        // on the first attempt.
+        assert!(not_ready_publishes(AppStatus::Menus, 0));
+        assert!(not_ready_publishes(AppStatus::ValorantNotRunning, 0));
     }
 
     #[test]
@@ -2210,6 +2342,36 @@ mod tests {
     }
 
     #[test]
+    fn a_window_plan_fetches_only_what_neither_cache_nor_this_pass_answers() {
+        let ids = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut cache = MatchDetailsCache::default();
+        let mut contribution = MatchContribution::new();
+        let played = MatchTotals { kills: 20, deaths: 15, kd_matches: 1, ..Default::default() };
+        contribution.insert("a".into(), played);
+        cache.put("m1", contribution);
+        let mut failed = HashSet::new();
+        failed.insert("m2".to_string());
+
+        let plan = plan_window(&cache, &failed, &ids(&["m1", "m2", "m3", "m4"]), "a");
+        assert_eq!(plan.cached.kills, 20);
+        assert!(plan.any_failed, "a dead id leaves the window incomplete");
+        assert_eq!(plan.to_fetch, ids(&["m3", "m4"]));
+    }
+
+    #[test]
+    fn a_window_plan_lists_each_id_once() {
+        // Two lanes run at a time, so a repeated id must not be sent twice — that would spend
+        // the request twice and fold its totals in twice.
+        let plan = plan_window(
+            &MatchDetailsCache::default(),
+            &HashSet::new(),
+            &["m1".to_string(), "m1".to_string(), "m2".to_string()],
+            "a",
+        );
+        assert_eq!(plan.to_fetch, vec!["m1".to_string(), "m2".to_string()]);
+    }
+
+    #[test]
     fn a_rate_limit_deadline_outlives_the_request_that_earned_it() {
         let gate = RateLimitGate::default();
         // Nothing owed by default.
@@ -2232,6 +2394,20 @@ mod tests {
         passed.arm(Duration::ZERO);
         assert_eq!(passed.wait(), None);
         assert!(passed.until.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_deadline_extended_mid_wait_is_waited_out_too() {
+        // The other lane's 429 lands while this one sleeps: the wait has to pick up the newer
+        // deadline instead of sending the moment the old one expires.
+        let gate = RateLimitGate::default();
+        gate.arm(Duration::from_millis(50));
+        let started = Instant::now();
+        tokio::join!(await_rate_limit(&gate), async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            gate.arm(Duration::from_millis(120));
+        });
+        assert!(started.elapsed() >= Duration::from_millis(120));
     }
 
     #[tokio::test]

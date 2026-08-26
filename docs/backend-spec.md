@@ -531,7 +531,11 @@ serde camelCase names are in `docs/ipc-contract.md`.
 core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) **plus phase
 2**: 10 competitiveupdates + up to 10×5 = 50 match-details + 1 loadouts = **61 new requests**.
 All routed through the existing 429 retry with a `INTER_REQUEST_DELAY_MS = 120` pause between
-per-player requests. A match-details payload is downloaded **once per match id**, not once per
+dispatches. match-details are the bulk of that (~45 calls in a measured live comp match) and
+its slowest calls, so they go out **two at a time** (`MATCH_DETAILS_CONCURRENCY = 2`), which
+counts as one dispatch for the 120 ms pause; every other call stays one per dispatch. Both
+lanes consult the session 429 gate before sending and arm it on a limit, so an armed backoff
+holds them both. A match-details payload is downloaded **once per match id**, not once per
 player (`MatchDetailsCache`, session-lived, keeps only the parsed per-player totals), so lobby
 members who played together share the download and a retry pass refetches only the ids that
 failed. Re-entry for the same match (score changes every round) costs **one** GET — the
@@ -681,6 +685,28 @@ instead of at the two phase boundaries, and each row carries a `PendingStats` gr
   lookup, inter-request delay, rate-limit gate, poke cancellation and `enrichment_is_final`
   rule is byte-for-byte what it was; only emission timing and the new pending metadata
   changed. The existing tests guard this.
+
+### Two-lane match-details (2026-08-26)
+
+A live competitive match measured ~45 match-details calls taking ~23 s of wall clock, all
+sequential. A full log of that burst recorded **zero** 429 responses, so the deliberate
+one-at-a-time caution was relaxed to two.
+
+- **`MATCH_DETAILS_CONCURRENCY = 2`** (`app_state`). A player's HS%/KD window is resolved
+  against the caches first (`plan_window`, pure), then the ids left over are downloaded in
+  batches of two. Nothing else about the burst changed: competitiveupdates, MMR and loadouts
+  stay one request at a time.
+- **Pacing kept, per dispatch.** The `INTER_REQUEST_DELAY_MS = 120` pause now sits between
+  *dispatches*, a two-wide batch counting as one — the simpler of the two options, and it keeps
+  the spacing the gate design assumes rather than leaning on the 429 retry alone.
+- **429 semantics unchanged.** Both lanes run through `with_rate_limit_retry`, so each waits
+  out an armed deadline before sending and arms `RateLimitGate` on a limit of its own; a
+  backoff armed by one lane holds the other's retry and every later batch. A poke still
+  abandons the whole batch (`until_poke`), and whatever landed before it stays cached.
+- **In-flight dedup.** `plan_window` lists each id once, so two lanes can never be sent after
+  the same match — which would spend the request twice and fold its totals in twice.
+- **Downstream untouched.** `MatchDetailsCache`, `RecentStatsCache` and the per-player settle /
+  `Partial` reporting are byte-for-byte what they were; only the dispatch shape changed.
 
 ### TLS
 
