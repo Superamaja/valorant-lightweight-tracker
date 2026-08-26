@@ -1,9 +1,8 @@
 import type { RankInfo } from "../../ipc/types";
 import { Img, Skeleton } from "../primitives";
 
-/** Current rank leads the pair; peak sits a step below it so the live rank reads first. */
+/** Current and peak rank share one icon size so the pair reads as equals. */
 const ICON = "h-8 w-8";
-const PEAK_ICON = "h-6 w-6";
 
 /**
  * A rank cell whose MMR has not landed. Until it does the row has no rank at all — showing
@@ -68,7 +67,7 @@ export function RankCell({
   );
 }
 
-/** Peak rank: a step smaller than the current rank but full colour, with the act it was set in. */
+/** Peak rank: full colour with the act it was set in. */
 export function PeakCell({
   rank,
   act,
@@ -78,12 +77,12 @@ export function PeakCell({
   act: string | null;
   pending: boolean;
 }) {
-  if (pending) return <RankSkeleton size={PEAK_ICON} />;
+  if (pending) return <RankSkeleton size={ICON} />;
 
   const title = `Peak: ${rank.name}${act ? ` · ${act}` : ""}`;
   return (
     <div className="flex items-center gap-1.5" title={title}>
-      <RankIcon rank={rank} size={PEAK_ICON} title={title} />
+      <RankIcon rank={rank} size={ICON} title={title} />
       {act && <span className="text-[9px] tracking-wide text-neutral-500">{act}</span>}
     </div>
   );
