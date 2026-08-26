@@ -1,4 +1,4 @@
-import { LOCKED, SELECTED, type AgentInfo } from "../../ipc/types";
+import { SELECTED, type AgentInfo } from "../../ipc/types";
 import { Img } from "../primitives";
 
 /**
@@ -17,8 +17,8 @@ export function AgentCell({
   level: number | null;
 }) {
   const picking = agent === null && selectionState === SELECTED;
-  const locked = agent !== null && selectionState === LOCKED;
   // Hovered but not locked in — the portrait shows dimmed so a tentative pick reads as such.
+  // A locked pick needs no marker of its own: it simply renders like any in-game agent.
   const hovered = agent !== null && selectionState === SELECTED;
   const label = agent
     ? hovered
@@ -32,9 +32,9 @@ export function AgentCell({
     <div className="relative h-10 w-10">
       <div
         title={label}
-        className={`h-full w-full overflow-hidden rounded-md bg-white/[0.03] ring-1 ${
-          locked ? "ring-accent/40" : "ring-white/10"
-        } ${picking ? "animate-pulse" : ""} ${hovered ? "opacity-60 saturate-50" : ""}`}
+        className={`h-full w-full overflow-hidden rounded-md bg-white/[0.03] ring-1 ring-white/10 ${
+          picking ? "animate-pulse" : ""
+        } ${hovered ? "opacity-60 saturate-50" : ""}`}
       >
         <Img
           src={agent?.iconUrl ?? null}

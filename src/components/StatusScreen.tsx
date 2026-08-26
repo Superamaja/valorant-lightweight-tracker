@@ -97,7 +97,7 @@ export function StatusScreen({
       </div>
 
       <div className="flex max-w-sm flex-col items-center">
-        <h2 className="text-[15px] font-medium tracking-wide text-neutral-200">{title}</h2>
+        <h2 className="text-[18px] font-medium tracking-wide text-neutral-200">{title}</h2>
         {subtitle && (
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{subtitle}</p>
         )}
