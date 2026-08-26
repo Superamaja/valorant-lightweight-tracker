@@ -16,7 +16,7 @@ Later work, in rough order. Items move out of here and into project-context.md w
 
 ## Last (deliberately after all features + polish)
 
-- **Release workflow** (do during release prep): validate tag format (`vX.Y.Z`, matching the manifests) and run `cargo test` before publishing; any `v*` tag currently publishes. Also (user decision 2026-08-25): the published exe filename must NOT contain the version — keep it stable across releases so the auto-updater can replace the file in place; the version lives in the tag/Release name only.
+- ~~**Release workflow**~~ **Done 2026-08-26** (Codex-reviewed): strict `vX.Y.Z` tag gate, tag-vs-manifest verification, `pnpm build` + `cargo test --locked` gates, stable version-free exe asset name; `pnpm bump` keeps `Cargo.lock` in sync so the `--locked` gate survives a bump. Details: `docs/release.md`. Still never run on a real runner.
 - **Updater UI** — built 2026-08-25 (header version badge + check-for-updates affordance; see ui-spec "Version / updater affordance"). Remaining: replace the stub body of `checkForUpdates()` in `src/lib/updater.ts` with the real auto-updater when it's built — the UI needs no further changes.
 - **Auto-updater** — user decision (2026-08-24): required before going public, but built last. Until then, no public release push; the existing pipeline stays for private/test tags only.
 - **First public release** — `pnpm bump 0.1.0` → tag → push; verify the never-exercised workflow on a real runner. Happens only after features, polish, and the auto-updater are done.
