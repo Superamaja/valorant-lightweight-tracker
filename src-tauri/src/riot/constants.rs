@@ -76,10 +76,24 @@ pub fn game_mode_name(queue_id: &str) -> String {
         "snowball" => "Snowball Fight",
         "valaram" => "All Random One Site",
         "dodgeball" => "Knockout",
+        "fortcollins" => "Retake",
         "" => "Custom",
-        other => return other.to_string(),
+        other => {
+            vlt_log!("state", "unknown queue id {other}");
+            return title_case(other);
+        }
     };
     name.to_string()
+}
+
+/// Presentable form of a queue id with no mapping: the raw id with its leading ASCII letter
+/// uppercased, so an unmapped mode reads as `Swiftplay` instead of the internal `swiftplay`.
+fn title_case(raw: &str) -> String {
+    let mut out = raw.to_string();
+    if let Some(first) = out.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    out
 }
 
 /// Static `X-Riot-ClientPlatform` base64 blob (vRY hardcodes this; accepted regardless
@@ -137,5 +151,31 @@ pub fn normalize_region(region: &str) -> &str {
     match region {
         "pbe" => "na",
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_queue_ids_map_to_display_names() {
+        assert_eq!(game_mode_name("competitive"), "Competitive");
+        assert_eq!(game_mode_name("fortcollins"), "Retake");
+        assert_eq!(game_mode_name(""), "Custom");
+    }
+
+    #[test]
+    fn an_unknown_queue_id_is_title_cased() {
+        assert_eq!(game_mode_name("brandnewmode"), "Brandnewmode");
+        assert_eq!(game_mode_name("Brandnewmode"), "Brandnewmode");
+        assert_eq!(game_mode_name("日本"), "日本");
+    }
+
+    #[test]
+    fn title_casing_leaves_odd_inputs_intact() {
+        assert_eq!(title_case(""), "");
+        assert_eq!(title_case("A"), "A");
+        assert_eq!(title_case("1v1"), "1v1");
     }
 }
