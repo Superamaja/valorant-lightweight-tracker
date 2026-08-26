@@ -15,12 +15,13 @@ single portable `.exe`. No installer, no code signing.
   the download against it before swapping anything.
 - Built on `windows-latest` with `pnpm tauri build --no-bundle` (no NSIS/MSI
   bundles, no updater json).
-- Release notes are auto-generated from the commits since the previous tag.
+- The release description is the matching `## vX.Y.Z` section of `CHANGELOG.md`,
+  with the auto-generated commit list since the previous tag appended below it.
 
 ## Gates
 
 The workflow triggers on any pushed `v*` tag, then refuses to publish unless all
-of these pass. The first two run right after checkout, before any toolchain is
+of these pass. The first three run right after checkout, before any toolchain is
 installed, so a bad tag fails within seconds:
 
 1. **Validate tag format** — the tag must be exactly `vX.Y.Z` (no pre-release or
@@ -30,8 +31,12 @@ installed, so a bad tag fails within seconds:
    version in `package.json`, `src-tauri/Cargo.toml` (the `[package]` version)
    and `src-tauri/tauri.conf.json`. A mismatch lists every offending file; the
    fix is `pnpm bump` plus a re-tag.
-3. **Typecheck and build frontend** — `pnpm build` (`tsc && vite build`).
-4. **Run Rust tests** — `cargo test --manifest-path src-tauri/Cargo.toml
+3. **Extract the changelog entry** — `CHANGELOG.md` must contain a
+   `## vX.Y.Z` section for the tag, and it must not be empty. The section body
+   becomes the release description; a missing or empty one fails with "write the
+   changelog entry for vX.Y.Z before tagging".
+4. **Typecheck and build frontend** — `pnpm build` (`tsc && vite build`).
+5. **Run Rust tests** — `cargo test --manifest-path src-tauri/Cargo.toml
    --locked`.
 
 Only after those does the exe build and the release get created.
@@ -52,10 +57,14 @@ Standard flow:
    The script refuses to run if the four files currently disagree; fix them to
    match first. It does no git actions.
 
-2. **Commit** the version bump:
+   Then add a `## v0.2.0 - YYYY-MM-DD` section at the top of `CHANGELOG.md`
+   listing what changed. Write it for the people using the app, in everyday
+   words ("Added", "Fixed", "Improved"), not in commit or module terms.
+
+2. **Commit** the version bump and the changelog:
 
    ```sh
-   git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+   git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock CHANGELOG.md
    git commit -m "Release v0.2.0"
    ```
 

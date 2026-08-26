@@ -53,6 +53,33 @@ jobs:
             throw "Tag '$env:TAG' expects version $version, but these files disagree (run ``pnpm bump``):`n$detail"
           }
 
+      # The hand-written notes become the release description; the auto-generated
+      # commit list is appended below them by the publish step.
+      - name: Extract the changelog entry
+        run: |
+          $version = $env:TAG.Substring(1)
+          $lines = Get-Content CHANGELOG.md
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s+v$([regex]::Escape($version))(?!\d)") {
+              $start = $i
+              break
+            }
+          }
+          if ($start -lt 0) {
+            throw "CHANGELOG.md has no '## $env:TAG' section. Write the changelog entry for $env:TAG before tagging."
+          }
+          $body = @()
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s') { break }
+            $body += $lines[$i]
+          }
+          $notes = ($body -join "`n").Trim()
+          if (-not $notes) {
+            throw "The '## $env:TAG' section in CHANGELOG.md is empty. Write the changelog entry for $env:TAG before tagging."
+          }
+          Set-Content -Path "$env:RUNNER_TEMP/release-notes.md" -Value $notes -Encoding utf8
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -111,5 +138,6 @@ jobs:
           files: |
             src-tauri/target/release/valorant-lightweight-tracker.exe
             src-tauri/target/release/valorant-lightweight-tracker.exe.sha256
+          body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
