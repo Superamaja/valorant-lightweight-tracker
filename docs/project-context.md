@@ -144,12 +144,35 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    - Final waiting-screen sizes after live iteration: title 18px, subtitle 13px, action
      button 12px, version line 10px (deliberately quiet). Locked agent picks render with
      the normal portrait ring (accent ring removed; pregame is allies-only).
+11d. ~~**Comp-log session 2026-08-26 (third pass).**~~ **Done, Codex-reviewed (two HIGH
+   findings fixed + re-reviewed clean), committed per change.** The user's live comp-match
+   debug log verified: zero 429s across the full session (~137 requests, both stat bursts),
+   locked-roster tick pause + pregame match-id cache (one request per steady-state tick),
+   chroma sockets (10/10 vandal+phantom), incremental fill-in (pending_rows stepped to 0),
+   and pregame/coregame match-id equality (same id both phases). Work shipped:
+   - Peak rank icon restored to the current-rank size (user request; shared `ICON` again).
+   - **Two-lane match-details fetching** (was gated on the 429 verification, now unblocked):
+     `plan_window` dedupes ids up front, chunks of 2 through the same 429 gate, 120ms per
+     dispatch (~60ms/request effective). Review fix: `await_rate_limit` loop re-checks the
+     gate after every sleep so a deadline extended by the other lane is honored.
+   - **Presence-gap grace**: the log caught a mid-match `Ingame -> ValorantNotRunning`
+     flash (4s, transient local presence gap). `Session.not_ready_streak` now suppresses
+     the first 2 consecutive NotReady publishes while a live match is on screen (~3s grace
+     via the existing retry loop); new debug `presence` log category lights the three
+     formerly-silent NotReady causes.
+   - **RateLimitGate boundary fix**: an exactly-reached deadline reported `Some(0ns)` and
+     stayed armed; now reports `None` and clears. This was the real cause of the "flaky"
+     `a_rate_limit_deadline_outlives_the_request_that_earned_it` test — no longer flaky,
+     which matters because `cargo test` now gates releases.
+   - **Release workflow hardening** (first roadmap "Last" item): strict `vX.Y.Z` tag gate,
+     tag-vs-manifest verification, `pnpm build` + `cargo test --locked` gates, stable
+     version-free exe asset name. Review fix: `pnpm bump` now also rewrites the app's
+     entry in `Cargo.lock` (four files, all in the consistency check) so the `--locked`
+     gate survives a bump. `docs/release.md` updated.
+   - **Auto-updater plan drafted** (custom rename-dance updater against GitHub releases/latest,
+     sha256 asset for integrity, user-initiated install via the existing chip) — Codex plan
+     review pending; implementation not started.
 11. **Session todo list (2026-08-26, remaining):**
-   - **Bounded-concurrency match-details fetches** — enrichment fetches match details
-     sequentially with a 120ms delay each; the first 45-call burst took 23s wall-clock.
-     Two in flight (keeping the 429 gate) could roughly halve initial enrichment time.
-     **Gated on** first live-verifying the comp-match rate-limit burst (open item below) —
-     the sequential pacing is deliberate 429 caution and no run has exercised a 429 yet.
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
      self-row ring removal, outlier stat weighting.
@@ -161,13 +184,12 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      built before any public release. Order: features + polish first, then auto-updater,
      then `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the workflow's
      first run on GitHub (never exercised on a real runner).
-   - **Still needing live verification**: party dot colours (needs a party lobby — every
-     capture so far was solo; if they turn out broken, decide then: fix or strip the dot
-     code), `latam`/`br` shard mapping (needs such an account), flat
-     presence shape, pregame-vs-coregame match-id equality (cache upgrade path), the
-     full-lobby 61-request stat burst under rate limits in a comp match (captures were
-     Spike Rush), the chroma socket uuid (`CHROMA_SOCKET_ID`), and the incremental
-     fill-in behavior in a live lobby.
+   - **Still needing live verification** (comp-log session 2026-08-26 cleared the rest —
+     see 11d): party dot colours (needs a party lobby — every capture so far was solo; if
+     they turn out broken, decide then: fix or strip the dot code), `latam`/`br` shard
+     mapping (needs such an account), flat presence shape, the two-lane fetch + presence
+     grace in a live match (both new this session), and the release-shaped CSP smoke test
+     (`--debug` exe, Ctrl+Shift+I in a match).
    - Possible polish noted from the first real-data screenshot: quiet the "Default"/"Default"
      skin text pairs; heavy N/A texture on no-comp-history rows.
 
