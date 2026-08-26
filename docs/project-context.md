@@ -90,7 +90,29 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    `--debug` exe for the CSP check + live look sits at
    `src-tauri/target/debug/valorant-lightweight-tracker.exe`. Known pre-existing flaky test:
    `a_rate_limit_deadline_outlives_the_request_that_earned_it` (Windows Instant granularity).
-10. **Open items for later sessions** (user finishes the roadmap there):
+10. ~~**Dev logging session 2026-08-26.**~~ **Done, committed (`feat(debug)`), Codex-reviewed**
+   (one high finding — full puuids/match ids in `net` log paths — fixed, re-reviewed clean):
+   debug-build-only live console logging via `vlt_log!` in `src-tauri/src/debug_log.rs`
+   (release builds compile it out entirely; zero new deps). Categories: `state` (publish
+   transitions/updates incl. pending-row counts), `rebuild` (poke vs pregame tick), `net`
+   (per-request seq/status/latency, 429 gate events; ids truncated to 8 chars, query dropped),
+   `enrich` (phase summaries, chroma/loadout counts, stats-cache hits), `ws`, `conn`. See
+   `docs/testing.md` "Live console log". Purpose: live-verify the item-11 open questions
+   (chroma socket id, incremental fill-in, rate-limit burst, pregame updates) from the
+   terminal. Same session also investigated the pregame poll: it costs **2 remote GLZ
+   requests/sec** (match-id lookup + match fetch every tick, cache unused in pregame);
+   "all 5 **locked**" is a safe stop condition ("selected" is not), and the own-presence
+   websocket poke catches pregame→ingame independently of the tick — not yet implemented,
+   see the todo list below.
+11. **Session todo list (2026-08-26, not yet implemented):**
+   - **Version/update UI redesign** — user dislikes the current header `v0.1.0` text next to
+     "6m ago"; rework `VersionBadge` presentation and decide the future update-available look
+     (auto-updater seam). Pending user input: tucked away vs visible-but-restyled.
+   - **Pregame poll: stop after all 5 allies locked** (safe per investigation above).
+   - **Pregame poll: cache the match id** — it can't change mid-pregame; halves poll cost.
+   - **Doc fix**: `docs/backend-spec.md` "Pregame poll tick" section says "one local pregame
+     GET per second"; actually two remote GLZ requests.
+12. **Open items for later sessions** (user finishes the roadmap there):
    - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
      browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
      Consider anonymizing names in the JSON first.
