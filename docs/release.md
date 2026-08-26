@@ -2,14 +2,17 @@
 
 How to cut a release. Releases are built by GitHub Actions
 (`.github/workflows/release.yml`) and appear on the repo's **Releases** page as a
-single portable `.exe`. No installer, no auto-updater, no code signing.
+single portable `.exe`. No installer, no code signing.
 
 ## What ships
 
-- One artifact per release: `valorant-lightweight-tracker.exe`, the portable
-  single executable from `src-tauri/target/release/`. The filename carries no
-  version on purpose, so it stays stable across releases (a future auto-updater
-  replaces the file in place); the version lives in the tag and the release name.
+- `valorant-lightweight-tracker.exe`, the portable single executable from
+  `src-tauri/target/release/`. The filename carries no version on purpose, so it
+  stays stable across releases (the auto-updater replaces the file in place); the
+  version lives in the tag and the release name.
+- `valorant-lightweight-tracker.exe.sha256` — the exe's SHA-256 as lowercase hex,
+  and nothing else (no file name, no trailing newline). The auto-updater verifies
+  the download against it before swapping anything.
 - Built on `windows-latest` with `pnpm tauri build --no-bundle` (no NSIS/MSI
   bundles, no updater json).
 - Release notes are auto-generated from the commits since the previous tag.
@@ -76,6 +79,32 @@ Standard flow:
 To undo a bad tag before/while it builds: `git push origin :v0.2.0` deletes the
 remote tag (delete the local one with `git tag -d v0.2.0`), then delete the draft
 release if one was created.
+
+## Auto-updater
+
+Lives in `src-tauri/src/updater.rs` (two commands, `check_update` and
+`apply_update`; see `docs/ipc-contract.md`). There is no updater plugin and no
+signing key: the app talks to the GitHub API directly.
+
+- **Check** — once per app start, and again whenever the version line on the
+  waiting screen is clicked. It GETs
+  `/repos/Superamaja/valorant-lightweight-tracker/releases/latest` and compares
+  the tag against the compiled-in `CARGO_PKG_VERSION`, numerically, field by
+  field. Pre-releases are excluded by the endpoint itself. The request is
+  unauthenticated (60 per hour per IP), **so the repo and its releases must be
+  public** for this to work at all. Being offline, rate-limited or handed an
+  unexpected shape ends as a "Check failed" line, never a crash.
+- **Install** — clicking the header's `Update: vX.Y.Z` chip. Both asset URLs come
+  from one release record, so the exe and its checksum can never be from
+  different releases. The exe streams to `…exe.new` beside the running one and is
+  rejected unless its SHA-256 matches the `.sha256` asset. Then the Windows
+  rename dance: the running `…exe` becomes `…exe.old` (a running binary can be
+  renamed, not overwritten), `…exe.new` takes its name, and the new binary is
+  spawned detached. The app only quits once that spawn succeeded; any failure
+  before or after the renames rolls back, and the user is told to download the
+  new version manually.
+- **Cleanup** — every start deletes a leftover `…exe.old` (best effort, retried
+  once, since the process that spawned this one may still be exiting).
 
 ## First-time setup
 

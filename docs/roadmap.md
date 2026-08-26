@@ -17,8 +17,8 @@ Later work, in rough order. Items move out of here and into project-context.md w
 ## Last (deliberately after all features + polish)
 
 - ~~**Release workflow**~~ **Done 2026-08-26** (Codex-reviewed): strict `vX.Y.Z` tag gate, tag-vs-manifest verification, `pnpm build` + `cargo test --locked` gates, stable version-free exe asset name; `pnpm bump` keeps `Cargo.lock` in sync so the `--locked` gate survives a bump. Details: `docs/release.md`. Still never run on a real runner.
-- **Updater UI** — built 2026-08-25 (header version badge + check-for-updates affordance; see ui-spec "Version / updater affordance"). Remaining: replace the stub body of `checkForUpdates()` in `src/lib/updater.ts` with the real auto-updater when it's built — the UI needs no further changes.
-- **Auto-updater** — user decision (2026-08-24): required before going public, but built last. Until then, no public release push; the existing pipeline stays for private/test tags only.
+- ~~**Updater UI**~~ **Done 2026-08-25**, wired to the backend 2026-08-26 (header version badge + check-for-updates affordance; see ui-spec "Version / updater affordance"). The badge is now the install button.
+- ~~**Auto-updater**~~ **Done 2026-08-26**: `check_update` / `apply_update` in `src-tauri/src/updater.rs` — GitHub `releases/latest`, SHA-256-verified download, Windows rename swap, detached relaunch, leftover cleanup on start. Requires a public repo. Details: `docs/release.md`.
 - **First public release** — `pnpm bump 0.1.0` → tag → push; verify the never-exercised workflow on a real runner. Happens only after features, polish, and the auto-updater are done.
 
 ## Later

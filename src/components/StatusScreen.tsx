@@ -31,9 +31,9 @@ function resultText(check: UpdateCheck): string {
   }
 }
 
-/** The version, doubling as the update control the future auto-updater will report through. */
+/** The version, doubling as the update control the auto-updater reports through. */
 function VersionLine() {
-  const { checking, result } = useUpdateState();
+  const { checking, installing, result, installError } = useUpdateState();
   const [showResult, setShowResult] = useState(false);
 
   useEffect(() => {
@@ -43,19 +43,26 @@ function VersionLine() {
     return () => clearTimeout(timer);
   }, [result]);
 
-  const shown = showResult ? result : null;
+  // A failed install stays up: unlike a check's answer, it is something to act on.
+  const shown = showResult && !installError ? result : null;
   const tone = shown?.state === "available" ? "text-accent/70" : "text-neutral-600";
+  const busy = checking || installing;
 
   return (
     <button
       type="button"
       onClick={runUpdateCheck}
-      title="Check for updates"
+      disabled={busy}
+      title={installError ?? "Check for updates"}
       className={`mt-6 text-[10px] tabular-nums ${tone} transition-colors hover:text-neutral-300 ${
-        checking ? "animate-pulse" : ""
+        busy ? "animate-pulse" : ""
       }`}
     >
-      {shown ? resultText(shown) : `v${APP_VERSION}`}
+      {installError
+        ? "Update failed"
+        : shown
+          ? resultText(shown)
+          : `v${APP_VERSION}`}
     </button>
   );
 }

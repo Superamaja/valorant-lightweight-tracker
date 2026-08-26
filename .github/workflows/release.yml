@@ -87,8 +87,8 @@ jobs:
       - name: Build release exe
         run: pnpm tauri build --no-bundle
 
-      # The asset name carries no version so the file keeps a stable download
-      # URL across releases; the version lives in the tag and release name.
+      # The asset names carry no version so the files keep stable download URLs
+      # across releases; the version lives in the tag and release name.
       - name: Verify portable exe
         run: |
           $exe = "src-tauri/target/release/valorant-lightweight-tracker.exe"
@@ -96,9 +96,20 @@ jobs:
             throw "Expected build output not found: $exe"
           }
 
+      # The auto-updater downloads this beside the exe and refuses to install a
+      # binary that hashes to anything else. Content: the lowercase hex digest
+      # alone (see src-tauri/src/updater.rs `parse_checksum`).
+      - name: Compute SHA-256 checksum
+        run: |
+          $exe = "src-tauri/target/release/valorant-lightweight-tracker.exe"
+          $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$exe.sha256" -Value $digest -NoNewline -Encoding ascii
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/release/valorant-lightweight-tracker.exe
+          files: |
+            src-tauri/target/release/valorant-lightweight-tracker.exe
+            src-tauri/target/release/valorant-lightweight-tracker.exe.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useUpdateState } from "../hooks/useUpdateState";
 import type { AppStatus, TrackerSnapshot } from "../ipc/types";
 import { clockTime, relativeTime } from "../lib/format";
+import { runUpdateCheck, runUpdateInstall } from "../lib/updater";
 import { ArrowLeftIcon, Img } from "./primitives";
 
 /** The chip doubles as the health indicator: a lit dot means the client is connected. */
@@ -46,20 +47,39 @@ function LastUpdated({ at, held }: { at: number; held: boolean }) {
 
 /**
  * Nothing at all until a check has found a newer version — the version itself lives on the
- * status screen, so the header only speaks up when there is something to act on.
+ * status screen, so the header only speaks up when there is something to act on. The one
+ * check of the session runs from here; clicking installs and restarts.
  */
 function UpdateBadge() {
-  const { result } = useUpdateState();
+  const { result, installing, installError } = useUpdateState();
+
+  useEffect(() => {
+    void runUpdateCheck();
+  }, []);
+
   if (result?.state !== "available") return null;
 
+  const label = installing
+    ? "Updating"
+    : `${installError ? "Retry" : "Update"}: v${result.version}`;
+
   return (
-    <span
-      className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[10px] tabular-nums text-accent/80"
-      title="A newer version is available"
+    <button
+      type="button"
+      onClick={runUpdateInstall}
+      disabled={installing}
+      title={
+        installing
+          ? "Downloading the update"
+          : (installError ?? "Install it and restart")
+      }
+      className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[10px] tabular-nums text-accent/80 transition-colors hover:bg-accent/20 hover:text-accent"
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-      Update: v{result.version}
-    </span>
+      <span
+        className={`h-1.5 w-1.5 rounded-full bg-accent ${installing ? "animate-pulse" : ""}`}
+      />
+      {label}
+    </button>
   );
 }
 

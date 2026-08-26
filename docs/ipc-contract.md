@@ -1,12 +1,13 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-08-25 (incremental stat loading: `PlayerRow.pending`, `enriched` reworked).
+Last updated: 2026-08-26 (auto-updater: `check_update`, `apply_update`).
 Status: backend implemented; this is the
 exact TypeScript-facing contract the UI agent builds against. Everything the frontend
 receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
 
-The backend exposes **two Tauri commands** and emits **one Tauri event**. All payloads are
-`serde`-serialized with `camelCase` field names.
+The backend exposes **four Tauri commands** (two for the tracker, two for the auto-updater)
+and emits **one Tauri event**. All payloads are `serde`-serialized with `camelCase` field
+names.
 
 ---
 
@@ -33,6 +34,36 @@ const snapshot = await invoke<TrackerSnapshot>("get_tracker_state");
 
 Returns the current `TrackerSnapshot` on demand (same shape the event carries). Use it once
 on mount to render immediately without waiting for the next event.
+
+### `check_update`
+
+```ts
+const info = await invoke<{ available: boolean; version: string }>("check_update");
+```
+
+Asks GitHub for the latest release. `version` is the tag without its `v`; `available` is true
+only when it is numerically newer than the running build. **Rejects** (with a display-ready
+message) when the app is offline, rate-limited, the release carries no installable assets, or
+its tag is not a plain `vX.Y.Z` — the frontend turns that into its `error` state. See
+`docs/release.md` for the mechanics.
+
+### `apply_update`
+
+```ts
+await invoke("apply_update"); // returns void, and the app quits
+```
+
+Downloads the latest release (only when its tag is a readable version strictly newer than the
+running build), verifies its SHA-256, swaps it in beside the running exe and relaunches. On
+success the app exits, so this call never resolves; it **rejects** with a display-ready message
+ending in "download the new version manually" — guaranteed for every failure, the wording is
+appended at the command boundary — and the current install is left working.
+
+Two failures say more than that, because the install did move: if the swap could not be undone
+the message names the `valorant-lightweight-tracker.exe.old` file the user has to rename back,
+and if only the relaunch failed the message says the new version is already installed and
+starting the app again runs it. The frontend keeps the "update available" result standing after
+a rejection so the user can try again.
 
 ---
 

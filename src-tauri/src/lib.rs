@@ -6,6 +6,7 @@ mod debug_log;
 
 mod app_state;
 mod riot;
+mod updater;
 
 use app_state::{tracker_main, Emitter, TrackerState};
 use riot::types::TrackerSnapshot;
@@ -49,7 +50,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(TrackerState::default()))
-        .invoke_handler(tauri::generate_handler![get_tracker_state, start_tracker])
+        .setup(|_app| {
+            updater::clean_previous_install();
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_tracker_state,
+            start_tracker,
+            updater::check_update,
+            updater::apply_update
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
