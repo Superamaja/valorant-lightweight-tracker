@@ -129,6 +129,21 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    accent-red ring (pregame is allies-only; locked now renders like any normal portrait) and
    the waiting title went 15px → 18px. README: held-table + party bullets replaced with the
    tracker.gg link-out bullet.
+11c. **Handoff to the next session (written 2026-08-26, end of session):**
+   - The user is playing a **competitive match right now** with the fresh debug exe and will
+     provide the console log next session. That log decides: the rate-limit burst
+     verification (any `429: backoff armed` lines?), the bounded-concurrency gate below,
+     and live confirmation of the locked-roster tick pause + pregame match-id cache
+     (steady-state ticks should show one request, not two). If they queued with a friend,
+     also check the party bars; the in-match devtools console (Ctrl+Shift+I) doubles as the
+     pending release-shaped CSP smoke test.
+   - Next work, per user: the roadmap "Last" items (release workflow hardening →
+     auto-updater → first release). **Nothing has been started** — a workflow-hardening
+     implementation and an auto-updater planning pass were both cancelled by the user
+     before producing anything; begin fresh next session.
+   - Final waiting-screen sizes after live iteration: title 18px, subtitle 13px, action
+     button 12px, version line 10px (deliberately quiet). Locked agent picks render with
+     the normal portrait ring (accent ring removed; pregame is allies-only).
 11. **Session todo list (2026-08-26, remaining):**
    - **Bounded-concurrency match-details fetches** — enrichment fetches match details
      sequentially with a 120ms delay each; the first 45-call burst took 23s wall-clock.
