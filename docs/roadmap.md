@@ -4,7 +4,7 @@ Later work, in rough order. Items move out of here and into project-context.md w
 
 ## Deferred from the 2026-08-25 mega audit (everything else was fixed; audit file deleted)
 
-- **CSP runtime smoke test** — dev run passed 2026-08-25 (live match visuals rendered, console clean); still pending: the release-shaped check. A `--debug` exe (release `csp` + devtools) is already built at `src-tauri/target/debug/valorant-lightweight-tracker.exe`; checklist: Ctrl+Shift+I console shows no CSP violations, valorant-api images render, table updates live.
+- **CSP runtime smoke test** — dev run passed 2026-08-25 (live match visuals rendered, console clean); still pending: the release-shaped check. A fresh `--debug` exe (release `csp` + devtools, built 2026-08-26 from current code) is already built at `src-tauri/target/debug/valorant-lightweight-tracker.exe`; checklist: Ctrl+Shift+I console shows no CSP violations, valorant-api images render, table updates live.
 
 ## Done (compact history)
 
@@ -19,7 +19,8 @@ Later work, in rough order. Items move out of here and into project-context.md w
 - ~~**Release workflow**~~ **Done 2026-08-26** (Codex-reviewed): strict `vX.Y.Z` tag gate, tag-vs-manifest verification, `pnpm build` + `cargo test --locked` gates, stable version-free exe asset name; `pnpm bump` keeps `Cargo.lock` in sync so the `--locked` gate survives a bump. Details: `docs/release.md`. Still never run on a real runner.
 - ~~**Updater UI**~~ **Done 2026-08-25**, wired to the backend 2026-08-26 (header version badge + check-for-updates affordance; see ui-spec "Version / updater affordance"). The badge is now the install button.
 - ~~**Auto-updater**~~ **Done 2026-08-26**: `check_update` / `apply_update` in `src-tauri/src/updater.rs` — GitHub `releases/latest`, SHA-256-verified download, Windows rename swap, detached relaunch, leftover cleanup on start. Requires a public repo. Details: `docs/release.md`.
-- ~~**First public release**~~ **Done 2026-08-26**: `v0.1.0` published — the workflow's first real run went green end to end (all gates, exe build, checksum, Release with both assets: exe 11.5 MB + 64-byte `.sha256`). Run: https://github.com/Superamaja/valorant-lightweight-tracker/actions/runs/32953164443. The auto-updater's end-to-end swap is still unexercised — the next release (v0.1.1) is its first real test. Workflow actions bumped off the deprecated Node 20 runtime 2026-08-26 (checkout@v7, setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3).
+- ~~**First public release**~~ **Done 2026-08-26**: `v0.1.0` published — the workflow's first real run went green end to end (all gates, exe build, checksum, Release with both assets: exe 11.5 MB + 64-byte `.sha256`). Run: https://github.com/Superamaja/valorant-lightweight-tracker/actions/runs/32953164443. Workflow actions bumped off the deprecated Node 20 runtime 2026-08-26 (checkout@v7, setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3).
+- ~~**v0.1.1 (auto-updater's first end-to-end target)**~~ **Done 2026-08-26**: release tooling only, no app changes. Tag pushed, workflow run green end to end on the newly-bumped actions, both assets attached (exe 11.5 MB + `.sha256`). The `CHANGELOG.md` gate ran for real for the first time and passed; the v0.1.1 section became the Release description. **Only remaining item: the updater swap test** — the user must launch their v0.1.0 exe and install the offered update.
 
 ## Later
 

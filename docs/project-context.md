@@ -191,12 +191,14 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      machines, user request).
    - CLAUDE.md also gained the commit-after-every-change convention (same portability
      reason).
-11f. **Handoff (end of 2026-08-26 sessions):**
-   - **Next release (v0.1.1+) is the auto-updater's first end-to-end test** — the swap
-     path has never run against a real newer release. Flow: CHANGELOG.md entry ->
-     `pnpm bump patch` -> commit -> tag -> push.
-   - ~~Workflow actions target deprecated Node 20~~ — bumped 2026-08-26 to checkout@v7,
-     setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3 (Codex-reviewed clean).
+11f. ~~**Handoff (end of 2026-08-26 sessions).**~~ **v0.1.1 shipped 2026-08-26** (release
+   tooling only, no app changes — purpose is to be the auto-updater's first end-to-end
+   target): tag pushed, workflow run green end to end on the newly-bumped actions
+   (checkout@v7, setup-node@v7, pnpm/action-setup@v6, action-gh-release@v3), both assets
+   attached (exe 11.5 MB + `.sha256`). The `CHANGELOG.md` gate ran for real for the first
+   time and passed; the v0.1.1 section became the Release description.
+   - **Swap test now unblocked, not yet performed**: the user must launch their v0.1.0 exe
+     and install the offered update.
    - Open verification items unchanged from item 12 + the two-lane fetch and presence
      grace next time the user plays with a debug build.
 11. **Session todo list (2026-08-26, remaining):**
@@ -204,9 +206,6 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
      self-row ring removal, outlier stat weighting.
 12. **Open items for later sessions** (user finishes the roadmap there):
-   - **App screenshots** (deferred by user to a later stage): take from the debug-snapshot
-     browser view; README has a commented placeholder at `docs/assets/app-screenshot.png`.
-     Consider anonymizing names in the JSON first.
    - **First release**: deferred to last (user decision 2026-08-24) — auto-updater must be
      built before any public release. Order: features + polish first, then auto-updater,
      then `pnpm bump 0.1.0` -> commit -> tag `v0.1.0` -> push tag; verify the workflow's
