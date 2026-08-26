@@ -80,12 +80,41 @@ fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSn
         if same_content(&prev, &snap) {
             return;
         }
+        #[cfg(debug_assertions)]
+        log_publish(prev.status, &snap);
     }
     snap.last_updated = crate::riot::types::now_millis();
     state.store(snap.clone());
     #[cfg(debug_assertions)]
     debug_capture::write(&snap);
     emitter.emit(&snap);
+}
+
+/// One console line per emitted snapshot: a status change spells out the match context it
+/// moved to, while a same-status update reports how much of the table is still outstanding.
+#[cfg(debug_assertions)]
+fn log_publish(prev_status: AppStatus, snap: &TrackerSnapshot) {
+    if prev_status != snap.status {
+        vlt_log!(
+            "state",
+            "{:?} -> {:?}  map={} mode={} players={} enriched={}",
+            prev_status,
+            snap.status,
+            snap.map.as_ref().map_or("-", |m| m.name.as_str()),
+            snap.mode.as_deref().unwrap_or("-"),
+            snap.players.len(),
+            snap.enriched
+        );
+    } else {
+        vlt_log!(
+            "state",
+            "{:?} update  players={} enriched={} pending_rows={}",
+            snap.status,
+            snap.players.len(),
+            snap.enriched,
+            snap.players.iter().filter(|p| p.pending != PendingStats::default()).count()
+        );
+    }
 }
 
 /// Whether two snapshots carry the same content, ignoring `last_updated` (which differs on
@@ -593,7 +622,10 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
         // Phase 1: wait for the lockfile.
         let lockfile = loop {
             match lockfile::read() {
-                Ok(lf) => break lf,
+                Ok(lf) => {
+                    vlt_log!("conn", "lockfile found (port {})", lf.port);
+                    break lf;
+                }
                 Err(_) => {
                     publish(
                         &state,
@@ -608,9 +640,20 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
         // Phase 2: connect.
         match connect(lockfile).await {
             Ok(mut session) => {
+                vlt_log!(
+                    "conn",
+                    "session up  region={} shard={} version={} season={}",
+                    session.remote.hosts.region,
+                    session.remote.hosts.shard,
+                    session.remote.auth.client_version,
+                    session.season_id
+                );
                 run_session(&mut session, &state, &emitter).await;
             }
-            Err(_) => {
+            // Underscore-bound: the reason is a dev-log detail only, and the log is compiled
+            // out of release builds.
+            Err(_err) => {
+                vlt_log!("conn", "connect failed: {:?}", _err);
                 publish(
                     &state,
                     &emitter,
@@ -683,6 +726,7 @@ async fn refresh_tokens(session: &mut Session) -> Result<()> {
     session
         .remote
         .set_tokens(entitlements.access_token, entitlements.token);
+    vlt_log!("conn", "token refresh");
     Ok(())
 }
 
@@ -771,12 +815,14 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
             // never re-read auth. Ending the task drops `tx`, which ends
             // `run_session` and sends the top-level loop back to the lockfile.
             if !lockfile::still_current(&ws_lockfile) {
+                vlt_log!("conn", "lockfile stale/gone -> ending session");
                 break;
             }
             // Re-poll after the drop so any transition during the outage is picked up (C2).
             if tx.send(Poke).await.is_err() {
                 break; // receiver gone
             }
+            vlt_log!("ws", "reconnecting in {backoff}s");
             tokio::time::sleep(Duration::from_secs(backoff)).await;
             backoff = (backoff * 2).min(30);
         }
@@ -810,6 +856,7 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
             // so the next event still fetches what is missing.
             let mut snap = state.snapshot();
             if settle_pending(&mut snap) {
+                vlt_log!("enrich", "retry budget exhausted; settling pending cells as final");
                 publish(state, emitter, snap);
             }
         }
@@ -817,6 +864,7 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
         // with a full retry budget.
         retry_attempt = 0;
         if outcome == BuildOutcome::Interrupted {
+            vlt_log!("rebuild", "interrupted mid-enrichment, rebuilding now");
             let _ = drain_pokes(&mut rx);
             continue;
         }
@@ -838,11 +886,23 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
 async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerState) -> bool {
     match poll_interval(state.status()) {
         Some(tick) => match tokio::time::timeout(tick, rx.recv()).await {
-            Ok(Some(_)) => true,
+            Ok(Some(_)) => {
+                vlt_log!("rebuild", "poke");
+                true
+            }
             Ok(None) => false, // websocket task ended -> client gone
-            Err(_) => true,    // poll tick -> rebuild agent select
+            Err(_) => {
+                vlt_log!("rebuild", "pregame tick");
+                true // poll tick -> rebuild agent select
+            }
         },
-        None => rx.recv().await.is_some(),
+        None => {
+            let received = rx.recv().await.is_some();
+            if received {
+                vlt_log!("rebuild", "poke");
+            }
+            received
+        }
     }
 }
 
@@ -851,9 +911,15 @@ async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerSta
 /// poke is lost. Returns false when the websocket task ended (client gone).
 async fn wait_before_retry(rx: &mut mpsc::Receiver<Poke>, delay: Duration) -> bool {
     match tokio::time::timeout(delay, rx.recv()).await {
-        Ok(Some(_)) => true,
+        Ok(Some(_)) => {
+            vlt_log!("rebuild", "poke cut the {}ms retry backoff short", delay.as_millis());
+            true
+        }
         Ok(None) => false, // websocket task ended -> client gone
-        Err(_) => true,    // backoff elapsed -> retry the build
+        Err(_) => {
+            vlt_log!("rebuild", "{}ms retry backoff elapsed", delay.as_millis());
+            true // backoff elapsed -> retry the build
+        }
     }
 }
 
@@ -1170,6 +1236,12 @@ async fn build_match_snapshot(
         }
     };
     let is_final = enrichment_is_final(complete, session.cache.phase2_attempts);
+    vlt_log!(
+        "enrich",
+        "phase2 outcome={outcome:?} attempts={}/{} final={is_final}",
+        session.cache.phase2_attempts,
+        MAX_PHASE2_ATTEMPTS
+    );
 
     session.cache.enriched = is_final;
     let snap2 = assemble_snapshot(&parts, &session.cache, progress.loadouts_fetched, is_final);
@@ -1295,19 +1367,21 @@ where
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
     if let Some(owed) = gate.wait() {
+        vlt_log!("net", "holding {}ms for earlier 429", owed.as_millis());
         tokio::time::sleep(owed).await;
     }
     match f().await {
         Err(Error::RateLimited(retry_after)) => {
-            gate.arm(rate_limit_backoff(retry_after));
+            arm_rate_limit(gate, retry_after);
             if let Some(owed) = gate.wait() {
+                vlt_log!("net", "holding {}ms for earlier 429", owed.as_millis());
                 tokio::time::sleep(owed).await;
             }
             match f().await {
                 // The retry's own Retry-After still binds later requests, even though no
                 // third attempt is made here.
                 Err(Error::RateLimited(retry_after)) => {
-                    gate.arm(rate_limit_backoff(retry_after));
+                    arm_rate_limit(gate, retry_after);
                     Err(Error::RateLimited(retry_after))
                 }
                 other => other,
@@ -1315,6 +1389,13 @@ where
         }
         other => other,
     }
+}
+
+/// Hold the session off for what the 429 asked for (or the default backoff), announcing it.
+fn arm_rate_limit(gate: &RateLimitGate, retry_after: Option<u64>) {
+    let backoff = rate_limit_backoff(retry_after);
+    vlt_log!("net", "429: backoff armed for {backoff:?} (retry_after={retry_after:?})");
+    gate.arm(backoff);
 }
 
 /// Batch name resolution. Propagates the errors that want fresh tokens so the caller refreshes
@@ -1370,6 +1451,7 @@ async fn fetch_phase1(
         .filter(|p| !cache.names.contains_key(*p))
         .cloned()
         .collect();
+    vlt_log!("enrich", "phase1: {} names to fetch", missing_names.len());
     if !missing_names.is_empty() {
         let Some(fetched) =
             until_poke(progress.ctx.rx, fetch_names(remote, gate, &missing_names)).await
@@ -1386,6 +1468,7 @@ async fn fetch_phase1(
         .filter(|p| !cache.mmr.contains_key(*p))
         .cloned()
         .collect();
+    vlt_log!("enrich", "phase1: {} mmr to fetch", missing_mmr.len());
     for (i, puuid) in missing_mmr.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(inter_request_delay()).await;
@@ -1500,6 +1583,7 @@ async fn fetch_phase2(
         };
         // Session cache hit (same newest match) -> reuse, no match-details fetch.
         if let Some(stats) = recent_stats_cache.get(puuid, &newest) {
+            vlt_log!("enrich", "stats cache hit for {}", crate::debug_log::short(puuid));
             cache.recent_stats.insert(puuid.clone(), stats);
             progress.publish_progress(cache, false);
             continue;
@@ -1582,6 +1666,15 @@ async fn fetch_phase2(
         match result {
             Ok(v) => {
                 cache.skins = loadout::parse_loadouts(&v);
+                vlt_log!(
+                    "enrich",
+                    "loadouts: {} players, vandal skin/chroma {}/{}, phantom {}/{}",
+                    cache.skins.len(),
+                    cache.skins.values().filter(|s| s.vandal.skin.is_some()).count(),
+                    cache.skins.values().filter(|s| s.vandal.chroma.is_some()).count(),
+                    cache.skins.values().filter(|s| s.phantom.skin.is_some()).count(),
+                    cache.skins.values().filter(|s| s.phantom.chroma.is_some()).count()
+                );
                 progress.loadouts_fetched = true;
                 progress.publish_progress(cache, false);
             }
@@ -1590,11 +1683,28 @@ async fn fetch_phase2(
         }
     }
 
-    Ok(if partial {
-        Phase2Outcome::Partial
-    } else {
-        Phase2Outcome::Complete
-    })
+    if !partial {
+        return Ok(Phase2Outcome::Complete);
+    }
+    vlt_log!(
+        "enrich",
+        "phase2 partial: updates missing for [{}], stats missing for [{}], skins missing={}",
+        missing_ids(puuids, |p| !cache.updates.contains_key(p)),
+        missing_ids(puuids, |p| !cache.recent_stats.contains_key(p)),
+        ingame && cache.skins.is_empty()
+    );
+    Ok(Phase2Outcome::Partial)
+}
+
+/// Comma-separated truncated puuids of the players `is_missing` still holds nothing for.
+#[cfg(debug_assertions)]
+fn missing_ids(puuids: &[String], is_missing: impl Fn(&str) -> bool) -> String {
+    puuids
+        .iter()
+        .filter(|p| is_missing(p))
+        .map(|p| crate::debug_log::short(p))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

@@ -90,6 +90,7 @@ pub async fn run_listener(
         .send(Message::Text(SUBSCRIBE.into()))
         .await
         .map_err(|e| Error::WebSocket(e.to_string()))?;
+    vlt_log!("ws", "connected + subscribed");
 
     while let Some(msg) = read.next().await {
         match msg {
@@ -100,11 +101,17 @@ pub async fn run_listener(
                     }
                 }
             }
-            Ok(Message::Close(_)) => break,
+            Ok(Message::Close(_)) => {
+                vlt_log!("ws", "closed (server close)");
+                break;
+            }
             Ok(_) => {}
             // Mid-stream error: the connection was established, so treat this like a
             // normal close (Ok) — the caller reconnects and resets its backoff (C8).
-            Err(_) => break,
+            Err(_) => {
+                vlt_log!("ws", "closed (stream error)");
+                break;
+            }
         }
     }
     // Reached only after a successful connect; a clean/aborted close returns Ok so the

@@ -1,9 +1,9 @@
 # Testing / debug mode
 
-Two dev-only affordances for working on the app without a live match. Both are absent from
-release builds: the frontend branch sits behind `import.meta.env.DEV` (tree-shaken out of
-`dist/`), and the backend capture behind `#[cfg(debug_assertions)]` (never compiled into a
-release binary).
+Three dev-only affordances for working on the app. All are absent from release builds: the
+frontend branch sits behind `import.meta.env.DEV` (tree-shaken out of `dist/`), and the backend
+capture plus the console log behind `#[cfg(debug_assertions)]` (never compiled into a release
+binary).
 
 ## 1. UI-only testing in a plain browser
 
@@ -54,6 +54,34 @@ Copy-Item src-tauri\debug\snapshot-0007-Ingame.json public\debug-snapshot.json
 ```
 
 Captured snapshots contain real puuids and player names. Do not share them.
+
+## 3. Live console log
+
+Always on in a debug build, with nothing to configure. Every line goes to stderr, so it shows
+up in the terminal running `pnpm tauri dev` (a debug exe launched from a terminal prints there
+too; launched from Explorer there is no console to print to).
+
+```
+[vlt     4.812] state: Pregame -> Ingame  map=Ascent mode=Competitive players=10 enriched=false
+[vlt     4.930] net: #37 GET /mmr/v1/players/8f4c1d2e -> 200 (117ms)
+```
+
+The number is seconds since the first line. Categories:
+
+- `state` — every snapshot that survived the dedup and reached the UI, plus how many rows are
+  still waiting on data.
+- `rebuild` — why a rebuild started: a presence poke, the agent-select tick, a retry backoff,
+  or an interruption mid-enrichment.
+- `net` — one line per remote request (serial number, path, HTTP status, round trip), plus 429
+  backoffs armed and waited out.
+- `enrich` — what each phase set out to fetch, cache hits, the loadout/chroma summary, and what
+  a partial pass left missing.
+- `ws` / `conn` — websocket connect/close/reconnect, and the session lifecycle: lockfile found,
+  session up, token refreshes, connection lost.
+
+Lines carry truncated puuids and match ids, never full ones: an id keeps its first 8
+characters, and in a request path the query string is dropped. Map/mode and the client
+version are real. `cargo build --release` compiles the whole thing out, arguments included.
 
 ## Git
 

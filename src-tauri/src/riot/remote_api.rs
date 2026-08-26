@@ -78,14 +78,28 @@ impl RemoteClient {
 
     /// GET a remote URL and map the standard error shapes.
     pub async fn get(&self, url: &str) -> Result<Value> {
+        #[cfg(debug_assertions)]
+        let (seq, started) = (crate::debug_log::next_request_seq(), std::time::Instant::now());
         let resp = self.apply_headers(self.http.get(url)).send().await?;
-        Self::handle(resp).await
+        #[cfg(debug_assertions)]
+        let status = resp.status().as_u16();
+        let result = Self::handle(resp).await;
+        #[cfg(debug_assertions)]
+        log_response(seq, "GET", url, status, started, &result);
+        result
     }
 
     /// PUT a JSON body (name-service batch).
     pub async fn put_json(&self, url: &str, body: &Value) -> Result<Value> {
+        #[cfg(debug_assertions)]
+        let (seq, started) = (crate::debug_log::next_request_seq(), std::time::Instant::now());
         let resp = self.apply_headers(self.http.put(url)).json(body).send().await?;
-        Self::handle(resp).await
+        #[cfg(debug_assertions)]
+        let status = resp.status().as_u16();
+        let result = Self::handle(resp).await;
+        #[cfg(debug_assertions)]
+        log_response(seq, "PUT", url, status, started, &result);
+        result
     }
 
     async fn handle(resp: reqwest::Response) -> Result<Value> {
@@ -153,6 +167,49 @@ impl RemoteClient {
 
     pub async fn content(&self) -> Result<Value> {
         self.get(&format!("{}/content-service/v3/content", self.hosts.shared)).await
+    }
+}
+
+/// One console line per remote request: serial, verb, path, HTTP status, round trip, and the
+/// mapped error when the response did not carry usable data.
+#[cfg(debug_assertions)]
+fn log_response(
+    seq: u32,
+    verb: &str,
+    url: &str,
+    status: u16,
+    started: std::time::Instant,
+    result: &Result<Value>,
+) {
+    let ms = started.elapsed().as_millis();
+    match result {
+        Ok(_) => vlt_log!("net", "#{seq} {verb} {} -> {status} ({ms}ms)", url_path(url)),
+        Err(err) => {
+            vlt_log!("net", "#{seq} {verb} {} -> {status} {err:?} ({ms}ms)", url_path(url))
+        }
+    }
+}
+
+/// The path of an absolute URL, so a log line is not two thirds host name, with every id-like
+/// segment cut to its first 8 characters and the query dropped — puuids and match ids never
+/// reach the console whole. A segment counts as an id when it is long and carries a digit,
+/// which leaves the endpoint words (`core-game`, `competitiveupdates`, `v1`) readable.
+#[cfg(debug_assertions)]
+fn url_path(url: &str) -> String {
+    let after_scheme = url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|at| &rest[at..]))
+        .unwrap_or(url);
+    let path = after_scheme.split(['?', '#']).next().unwrap_or(after_scheme);
+    path.split('/').map(redact_segment).collect::<Vec<_>>().join("/")
+}
+
+#[cfg(debug_assertions)]
+fn redact_segment(segment: &str) -> &str {
+    if segment.len() > 8 && segment.bytes().any(|b| b.is_ascii_digit()) {
+        crate::debug_log::short(segment)
+    } else {
+        segment
     }
 }
 
@@ -277,5 +334,39 @@ mod tests {
     fn passes_success_body_through() {
         let ok = map_body_error(200, json!({ "MatchID": "x" })).unwrap();
         assert_eq!(ok.get("MatchID").unwrap(), "x");
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod log_path_tests {
+    use super::url_path;
+
+    #[test]
+    fn truncates_id_segments_and_keeps_endpoint_words() {
+        assert_eq!(
+            url_path("https://pd.eu.a.pvp.net/mmr/v1/players/8f4c1d2e-3a5b-4c6d-8e9f-0a1b2c3d4e5f"),
+            "/mmr/v1/players/8f4c1d2e"
+        );
+        assert_eq!(
+            url_path(
+                "https://glz-eu-1.eu.a.pvp.net/core-game/v1/matches/8f4c1d2e-3a5b-4c6d-8e9f-0a1b2c3d4e5f/loadouts"
+            ),
+            "/core-game/v1/matches/8f4c1d2e/loadouts"
+        );
+    }
+
+    #[test]
+    fn drops_the_query_string() {
+        assert_eq!(
+            url_path(
+                "https://pd.eu.a.pvp.net/mmr/v1/players/8f4c1d2e-3a5b-4c6d-8e9f-0a1b2c3d4e5f/competitiveupdates?startIndex=0&endIndex=5&queue=competitive"
+            ),
+            "/mmr/v1/players/8f4c1d2e/competitiveupdates"
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_path_survives() {
+        assert_eq!(url_path("https://shared.eu.a.pvp.net"), "https://shared.eu.a.pvp.net");
     }
 }
