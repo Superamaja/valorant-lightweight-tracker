@@ -282,11 +282,17 @@ const PREGAME_POLL_MS: u64 = 1000;
 /// `Some` only in Pregame: Riot pushes no presence event when a lobby player picks or locks an
 /// agent (a friend's event carries nothing about their pick, and cannot be told from any other
 /// friend's), and our own presence doesn't change either, so agent select would sit
-/// still for its whole ~100 s after the entry events. Polling the local pregame endpoint once
-/// a second keeps the roster live (vRY's main loop polls for the same reason). Every other
-/// status stays purely event-driven — `None` means "wait indefinitely". Pure.
-fn poll_interval(status: AppStatus) -> Option<Duration> {
-    (status == AppStatus::Pregame).then(|| Duration::from_millis(PREGAME_POLL_MS))
+/// still for its whole ~100 s after the entry events. Polling the pregame endpoints once
+/// a second keeps the roster live (vRY's main loop polls for the same reason).
+///
+/// `roster_locked` ends the tick early: once every ally has locked an agent, nothing in the
+/// pregame payload can change again, and the pregame→ingame transition arrives as an
+/// own-presence poke. The rest of agent select — usually its longest stretch — then costs
+/// nothing. Every other status stays purely event-driven; `None` means "wait indefinitely".
+/// Pure.
+fn poll_interval(status: AppStatus, roster_locked: bool) -> Option<Duration> {
+    (status == AppStatus::Pregame && !roster_locked)
+        .then(|| Duration::from_millis(PREGAME_POLL_MS))
 }
 
 /// Backoff schedule for retrying a failed rebuild, in milliseconds. A build only
@@ -437,6 +443,16 @@ struct MatchCache {
     skins: HashMap<String, PlayerSkinIds>,
     /// The coregame match payload's roster, kept for INGAME only (see `cached_roster`).
     roster: Option<CachedRoster>,
+    /// The agent-select match id, once resolved (see `pregame_id`).
+    pregame_match_id: Option<String>,
+    /// Whether the pregame build in progress saw every ally locked in — the poll tick then
+    /// stops (see `poll_interval`). Cleared at the start of every rebuild, so only a build
+    /// that got as far as parsing a fully locked roster keeps the tick paused.
+    pregame_locked: bool,
+    /// Whether the immediate 404 retry has already been spent on the current unresolved
+    /// state-transition race (see `fetch_with_retry`). Cleared by the next match-id fetch that
+    /// succeeds, and by any invalidation.
+    id_retry_spent: bool,
 }
 
 /// What a snapshot needs out of the match payload. Once a match is running the roster, the
@@ -476,6 +492,18 @@ impl MatchCache {
         self.roster.as_ref()
     }
 
+    /// The agent-select match id to reuse instead of asking `pregame/v1/players` for it again:
+    /// it is fixed for the lobby's lifetime, so the poll tick costs one request rather than
+    /// two. Never serves INGAME — that id comes from the coregame endpoint, and the cheap
+    /// coregame match-id GET is what detects the transition.
+    fn pregame_id(&self, ingame: bool) -> Option<String> {
+        if ingame {
+            None
+        } else {
+            self.pregame_match_id.clone()
+        }
+    }
+
     /// Prepare the cache to (re)build `match_id` at `ingame`. Same-match data is KEPT so a
     /// pregame→ingame upgrade — or a phase-1 cache being enriched, or a burst resumed after
     /// an abort — reuses the already-fetched per-puuid rows and fetches only what's missing
@@ -499,6 +527,15 @@ impl MatchCache {
         self.match_id = Some(match_id.to_string());
         self.ingame = ingame;
         self.enriched = false;
+    }
+
+    /// Lift the agent-select poll pause. Every rebuild starts here, because only the build
+    /// that goes on to parse a fully locked pregame roster may set the flag again: a build
+    /// that fails anywhere earlier (a 404 transition race, an unreadable payload) then leaves
+    /// the 1 s tick running to recover on its own, instead of stranding the lobby on a pause
+    /// nothing is scheduled to lift.
+    fn clear_pregame_lock(&mut self) {
+        self.pregame_locked = false;
     }
 
     /// Drop everything (transition to MENUS / not-running).
@@ -868,7 +905,7 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
             let _ = drain_pokes(&mut rx);
             continue;
         }
-        if !wait_for_rebuild_poke(&mut rx, state).await {
+        if !wait_for_rebuild_poke(&mut rx, state, session.cache.pregame_locked).await {
             break; // websocket task ended -> client gone
         }
     }
@@ -882,9 +919,15 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
 /// In Pregame the wait is bounded by `poll_interval`, so an elapsed timeout triggers a rebuild
 /// just like a poke would — that tick is what makes teammates' agent picks visible, since Riot
 /// pushes no presence event for them. Identical rebuilds are suppressed by the snapshot dedup
-/// in `publish`, and a tick can't stack with pokes: the rebuild drains the channel anyway.
-async fn wait_for_rebuild_poke(rx: &mut mpsc::Receiver<Poke>, state: &TrackerState) -> bool {
-    match poll_interval(state.status()) {
+/// in `publish`, and a tick can't stack with pokes: the rebuild drains the channel anyway. A
+/// roster whose every ally has locked in has nothing left to tick for, so the wait goes back to
+/// being purely event-driven.
+async fn wait_for_rebuild_poke(
+    rx: &mut mpsc::Receiver<Poke>,
+    state: &TrackerState,
+    roster_locked: bool,
+) -> bool {
+    match poll_interval(state.status(), roster_locked) {
         Some(tick) => match tokio::time::timeout(tick, rx.recv()).await {
             Ok(Some(_)) => {
                 vlt_log!("rebuild", "poke");
@@ -977,6 +1020,7 @@ async fn fetch_presences(local: &LocalClient) -> Result<Vec<presence::RawPresenc
 /// The returned `BuildOutcome` tells the session loop what to do next (see
 /// `build_and_publish`).
 async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
+    session.cache.clear_pregame_lock();
     let presences = fetch_presences(&session.local).await?;
     let own = presences
         .iter()
@@ -1044,32 +1088,63 @@ async fn build_match_snapshot(
     let own = session.own_puuid.clone();
 
     // Match id. On the RESOURCE_NOT_FOUND transition race, retry once — after ~5s for
-    // coregame, immediately for pregame (spec §10.5, C9). The 429 retry sits INSIDE the
+    // coregame, immediately for pregame (spec §10.5, C9) — but only while that retry has not
+    // already been spent on the same unresolved race, so a transition that outlasts several
+    // backoff cycles costs one 404 per cycle instead of two. The 429 retry sits INSIDE the
     // 404-race retry so a rate limit is backed off once per attempt rather than being
-    // multiplied by it.
-    let id_fetch = if ingame {
-        until_poke(
-            ctx.rx,
-            fetch_with_retry(Duration::from_secs(5), || {
-                with_rate_limit_retry(&session.rate_limit, || {
-                    session.remote.coregame_match_id(&own)
-                })
-            }),
-        )
-        .await
-    } else {
-        until_poke(
-            ctx.rx,
-            fetch_with_retry(Duration::ZERO, || {
-                with_rate_limit_retry(&session.rate_limit, || session.remote.pregame_match_id(&own))
-            }),
-        )
-        .await
+    // multiplied by it. Agent select reuses the id it already resolved (`pregame_id`).
+    let match_id = match session.cache.pregame_id(ingame) {
+        // A cached id means no race is in progress, so the next one gets its retry.
+        Some(id) => {
+            session.cache.id_retry_spent = false;
+            id
+        }
+        None => {
+            let retry_404 = !session.cache.id_retry_spent;
+            let id_fetch = if ingame {
+                until_poke(
+                    ctx.rx,
+                    fetch_with_retry(Duration::from_secs(5), retry_404, || {
+                        with_rate_limit_retry(&session.rate_limit, || {
+                            session.remote.coregame_match_id(&own)
+                        })
+                    }),
+                )
+                .await
+            } else {
+                until_poke(
+                    ctx.rx,
+                    fetch_with_retry(Duration::ZERO, retry_404, || {
+                        with_rate_limit_retry(&session.rate_limit, || {
+                            session.remote.pregame_match_id(&own)
+                        })
+                    }),
+                )
+                .await
+            };
+            let Some(id_json) = id_fetch else {
+                return Ok(BuildOutcome::Interrupted);
+            };
+            let resolved = id_json
+                .and_then(|v| match_state::extract_match_id(&v).ok_or(Error::ResourceNotFound));
+            match resolved {
+                Ok(id) => {
+                    session.cache.id_retry_spent = false;
+                    if !ingame {
+                        session.cache.pregame_match_id = Some(id.clone());
+                    }
+                    id
+                }
+                Err(err) => {
+                    if matches!(err, Error::ResourceNotFound) {
+                        vlt_log!("rebuild", "match id 404 (immediate retry spent={})", !retry_404);
+                        session.cache.id_retry_spent = true;
+                    }
+                    return Err(err);
+                }
+            }
+        }
     };
-    let Some(id_json) = id_fetch else {
-        return Ok(BuildOutcome::Interrupted);
-    };
-    let match_id = match_state::extract_match_id(&id_json?).ok_or(Error::ResourceNotFound)?;
 
     let status = if ingame { AppStatus::Ingame } else { AppStatus::Pregame };
     let mode = if info.is_custom_game() {
@@ -1113,16 +1188,34 @@ async fn build_match_snapshot(
     let Some(match_json) = match_fetch else {
         return Ok(BuildOutcome::Interrupted);
     };
+    // A cached agent-select id that the match endpoint no longer knows means the lobby is gone
+    // (dodged, or already transitioned): drop it so the next attempt resolves the id afresh
+    // and the 404-race handling applies to it again.
+    let match_json = match match_json {
+        Ok(value) => value,
+        Err(err) => {
+            if matches!(err, Error::ResourceNotFound) {
+                session.cache.pregame_match_id = None;
+            }
+            return Err(err);
+        }
+    };
     let (players, own_team, map_id): (Vec<MatchPlayer>, Option<String>, Option<String>) = if ingame
     {
         // A payload we can't read is an error, not an empty lobby: erroring here happens
         // BEFORE `begin_match`, so nothing is cached and the loop retries.
-        let data = match_state::extract_coregame(match_json?, &own)?;
+        let data = match_state::extract_coregame(match_json, &own)?;
         (data.players, data.own_team, data.map_id)
     } else {
-        let data = match_state::extract_pregame(match_json?, &own)?;
+        let data = match_state::extract_pregame(match_json, &own)?;
         (data.players, data.own_team, data.map_id)
     };
+
+    // Agent select stops polling once nothing is left to see (see `poll_interval`).
+    if !ingame && match_state::roster_fully_locked(&players) {
+        vlt_log!("rebuild", "pregame roster fully locked; poll tick paused");
+        session.cache.pregame_locked = true;
+    }
 
     let map = session.static_data.map(map_id.as_deref());
 
@@ -1292,14 +1385,17 @@ fn assemble_snapshot(
 }
 
 /// Retry a fetch once on the RESOURCE_NOT_FOUND state-transition race (spec §10.5). `delay`
-/// is the wait before the single retry (5s for coregame, zero for pregame — C9).
-async fn fetch_with_retry<F, Fut>(delay: Duration, f: F) -> Result<serde_json::Value>
+/// is the wait before the single retry (5s for coregame, zero for pregame — C9). `retry` is
+/// false when an earlier attempt at the same still-unresolved race already spent that retry:
+/// the outer backoff is then the only thing repeating the call, so a long transition costs one
+/// 404 per cycle rather than a pair.
+async fn fetch_with_retry<F, Fut>(delay: Duration, retry: bool, f: F) -> Result<serde_json::Value>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
     match f().await {
-        Err(Error::ResourceNotFound) => {
+        Err(Error::ResourceNotFound) if retry => {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
@@ -1716,12 +1812,20 @@ mod tests {
         // Agent select gets a bounded wait (no presence events for non-friends' picks); every
         // other state stays purely event-driven.
         assert_eq!(
-            poll_interval(AppStatus::Pregame),
+            poll_interval(AppStatus::Pregame, false),
             Some(Duration::from_millis(PREGAME_POLL_MS))
         );
-        assert_eq!(poll_interval(AppStatus::Ingame), None);
-        assert_eq!(poll_interval(AppStatus::Menus), None);
-        assert_eq!(poll_interval(AppStatus::ValorantNotRunning), None);
+        assert_eq!(poll_interval(AppStatus::Ingame, false), None);
+        assert_eq!(poll_interval(AppStatus::Menus, false), None);
+        assert_eq!(poll_interval(AppStatus::ValorantNotRunning, false), None);
+    }
+
+    #[test]
+    fn a_fully_locked_agent_select_stops_ticking() {
+        // Nothing in the pregame payload can change once every ally has locked in, and the
+        // transition into the match arrives as an own-presence poke.
+        assert_eq!(poll_interval(AppStatus::Pregame, true), None);
+        assert_eq!(poll_interval(AppStatus::Ingame, true), None);
     }
 
     #[test]
@@ -1803,6 +1907,29 @@ mod tests {
         // Websocket task gone -> end the session so the top level re-reads the lockfile.
         drop(tx);
         assert!(!wait_before_retry(&mut rx, Duration::from_secs(30)).await);
+    }
+
+    #[tokio::test]
+    async fn the_immediate_404_retry_is_spent_once_per_race() {
+        let calls = std::cell::Cell::new(0u32);
+        let not_found = || {
+            calls.set(calls.get() + 1);
+            std::future::ready(Err(Error::ResourceNotFound))
+        };
+
+        // First cycle: the documented single retry on the transition race.
+        assert!(fetch_with_retry(Duration::ZERO, true, not_found).await.is_err());
+        assert_eq!(calls.get(), 2);
+
+        // Later cycles of the same unresolved race carry `retry = false`, so the outer backoff
+        // is the only thing repeating the call — one 404 per cycle instead of a pair.
+        assert!(fetch_with_retry(Duration::ZERO, false, not_found).await.is_err());
+        assert_eq!(calls.get(), 3);
+
+        // A fetch that succeeds never retries, whatever the flag says — and it is what clears
+        // the flag for the next race.
+        let found = || std::future::ready(Ok(serde_json::json!({ "MatchID": "m" })));
+        assert!(fetch_with_retry(Duration::ZERO, true, found).await.is_ok());
     }
 
     #[test]
@@ -1933,10 +2060,50 @@ mod tests {
         c.begin_match("m", true);
         c.names.insert("p".into(), "x".into());
         c.enriched = true;
+        c.pregame_match_id = Some("m".into());
+        c.pregame_locked = true;
+        c.id_retry_spent = true;
         c.invalidate();
         assert!(!c.is_fresh_for("m", true));
         assert!(c.names.is_empty());
         assert_eq!(c.match_id, None);
+        // Leaving a match (MENUS) is what un-sticks the agent-select bookkeeping: the next
+        // lobby resolves its own id, ticks again, and gets its own immediate 404 retry.
+        assert_eq!(c.pregame_id(false), None);
+        assert!(!c.pregame_locked);
+        assert!(!c.id_retry_spent);
+    }
+
+    #[test]
+    fn every_rebuild_lifts_the_agent_select_poll_pause() {
+        let mut c = MatchCache::default();
+        c.begin_match("m", false);
+        c.pregame_locked = true;
+
+        // A build that fails before it can parse a roster must not inherit the pause: the tick
+        // is the only thing scheduled to rebuild agent select, so leaving it stopped would
+        // freeze the lobby until an unrelated presence event arrived.
+        c.clear_pregame_lock();
+        assert!(!c.pregame_locked);
+        assert!(poll_interval(AppStatus::Pregame, c.pregame_locked).is_some());
+
+        // Nor does an INGAME build, which never sets the flag at all.
+        c.pregame_locked = true;
+        c.clear_pregame_lock();
+        c.begin_match("m", true);
+        assert!(!c.pregame_locked);
+    }
+
+    #[test]
+    fn the_pregame_match_id_is_reused_only_during_agent_select() {
+        let mut c = MatchCache::default();
+        // Nothing resolved yet -> the id must be fetched.
+        assert_eq!(c.pregame_id(false), None);
+
+        c.pregame_match_id = Some("m".into());
+        assert_eq!(c.pregame_id(false).as_deref(), Some("m"));
+        // INGAME always asks the coregame endpoint — that GET is the transition detector.
+        assert_eq!(c.pregame_id(true), None);
     }
 
     /// A roster row, enough for the ingame skip tests.

@@ -431,11 +431,41 @@ could not be verified because Valorant was not running on the build machine (no 
   therefore bounds its wait with `tokio::time::timeout` whenever `poll_interval(status)` is
   `Some` — Pregame only, at `PREGAME_POLL_MS = 1000`. An elapsed tick is a rebuild trigger
   equivalent to a poke, so the pregame `CharacterID` / `agentSelectionState` per ally refreshes
-  every second. Cost: one local pregame GET per second, **only** during agent select (the
-  fully-cached path serves it — no name/MMR/stat refetch), and identical snapshots are
-  suppressed by the existing `publish` dedup, so an unchanged roster emits nothing. Menus,
-  Ingame and the not-running states get `None` and stay purely event-driven — **there is no
-  ingame polling**. A tick can't stack with pokes: the rebuild drains the channel as usual.
+  every second. Cost: **one remote glz GET per second** — `pregame/v1/matches/{id}`, the change
+  detector itself (the endpoints are glz, not local; only presence and the lockfile are local) —
+  **only** during agent select, since the fully-cached path serves the rest (no name/MMR/stat
+  refetch). Identical snapshots are suppressed by the existing `publish` dedup, so an unchanged
+  roster emits nothing. Menus, Ingame and the not-running states get `None` and stay purely
+  event-driven — **there is no ingame polling**. A tick can't stack with pokes: the rebuild
+  drains the channel as usual.
+- **Pregame tick cost reductions (2026-08-25)**: three changes cut what agent select spends,
+  without changing what it detects.
+  - **The tick stops once the roster is fully locked.** `match_state::roster_fully_locked` is
+    true when every player in the pregame roster has `CharacterSelectionState == "locked"` AND a
+    non-empty `CharacterID`; nothing in the payload can change after that, so
+    `poll_interval(status, roster_locked)` returns `None` and the loop goes back to the purely
+    event-driven wait for the rest of agent select (usually its longest stretch). The
+    pregame→ingame transition is caught independently by the own-presence poke, and a dodge
+    likewise cancels the lobby through a presence-driven state change. Anything unclear counts
+    as NOT locked and keeps the tick running: an empty roster, an absent
+    `CharacterSelectionState`, a lock without an agent id. Every rebuild clears the flag before
+    it fetches anything, and only a build that parses a fully locked pregame roster sets it
+    again — so it is `false` for INGAME, and a build that fails earlier (404 race, unreadable
+    payload) leaves the tick running instead of pausing it with nothing scheduled to lift it.
+    `MatchCache::invalidate` (MENUS / not-running) clears it too.
+  - **The agent-select match id is cached.** It cannot change while the lobby lasts, so
+    `MatchCache::pregame_match_id` holds it and the steady-state tick spends **1 request instead
+    of 2** (`pregame/v1/players` is skipped). INGAME never reads it — the coregame match-id GET
+    stays the transition detector. It is dropped on any invalidation (MENUS) and on a
+    `RESOURCE_NOT_FOUND` from `pregame/v1/matches/{id}`, which means the lobby is already gone,
+    so the next attempt re-resolves the id and the §10.5 404-race handling applies to it again.
+  - **The immediate 404 retry is deduped across backoff cycles.** §10.5's single retry (5s for
+    coregame, immediate for pregame) is kept for the first cycle of a race, but
+    `MatchCache::id_retry_spent` suppresses it while the same race is still unresolved, so a
+    transition that outlasts several `RETRY_BACKOFF_MS` cycles costs one 404 per cycle instead
+    of a back-to-back pair. The flag clears on the next match-id fetch that succeeds and on any
+    invalidation. The outer backoff schedule and the poke-cuts-backoff-short behavior are
+    unchanged.
 - **Static-data cache**: version-keyed JSON files under
   `%LOCALAPPDATA%\valorant-lightweight-tracker\static-cache\static-<version>.json`. Image PNGs
   themselves are passed to the UI as plain valorant-api URLs (not downloaded/cached in Rust).
@@ -508,6 +538,11 @@ failed. Re-entry for the same match (score changes every round) costs **one** GE
 coregame players-id call, kept as the change detector; the roster/map/agents come from
 `MatchCache`, and returning players skip match-details via `RecentStatsCache`. WR adds **0** requests (reuses phase-1 MMR), and so does KD (it reads the
 match-details already fetched for HS%).
+
+**Agent-select steady state (PREGAME):** **1 request per tick** — `pregame/v1/matches/{id}`,
+with the match id served from cache — and **0 once every ally has locked in**, since the tick
+stops there (see the pregame tick notes in the previous section). The 5 ally rows themselves are fetched once, on
+the build that enters agent select, and reused by every later tick.
 
 ### Review-pass fixes (2026-08-24)
 
@@ -655,7 +690,8 @@ instead of at the two phase boundaries, and each row carries a `PendingStats` gr
 
 ### Testing
 
-- 119 unit tests today; the list below was written at 92 (86 as below + 6 from the phase-2
+- 169 unit tests today (the last four cover the all-locked roster predicate, the agent-select
+  match-id cache and the deduped 404 retry); the list below was written at 92 (86 as below + 6 from the phase-2
   review fixes: the `MatchCache` freshness rule incl. the pregame-stale-when-ingame guard and
   same-match reuse, plus round-half-to-even tie cases for WR and HS%), all pure functions, driven by inline JSON fixtures
   authored from this spec's documented shapes (phase-2 fixtures sanitized from the live probe

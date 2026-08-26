@@ -102,6 +102,21 @@ fn normalize_character(id: &str) -> Option<String> {
     }
 }
 
+/// The `CharacterSelectionState` of a player who has committed to an agent; the other live
+/// value is `"selected"` (still picking, and still changeable).
+const LOCKED: &str = "locked";
+
+/// Whether every player of a pregame roster has locked an agent — the point past which the
+/// pregame payload can no longer change, so nothing is left for a poll tick to discover. An
+/// empty roster, a missing `CharacterSelectionState` and a lock without an agent id all count
+/// as NOT locked, so the tick keeps running whenever the payload is unclear. Pure.
+pub fn roster_fully_locked(players: &[MatchPlayer]) -> bool {
+    !players.is_empty()
+        && players
+            .iter()
+            .all(|p| p.selection_state.as_deref() == Some(LOCKED) && p.character_id.is_some())
+}
+
 /// Extract a `MatchID` (coregame/pregame players endpoint) from `{"MatchID": "..."}`.
 pub fn extract_match_id(value: &Value) -> Option<String> {
     value
@@ -334,6 +349,34 @@ mod tests {
         });
         let data = extract_pregame(payload, "me").unwrap();
         assert_eq!(data.own_team.as_deref(), Some("Red"));
+    }
+
+    /// A pregame roster row with the given selection state + agent.
+    fn ally(state: Option<&str>, agent: Option<&str>) -> MatchPlayer {
+        MatchPlayer {
+            puuid: "p".into(),
+            team: "Blue".into(),
+            character_id: agent.map(String::from),
+            selection_state: state.map(String::from),
+            account_level: 0,
+            incognito: false,
+            hide_account_level: false,
+        }
+    }
+
+    #[test]
+    fn a_roster_is_locked_only_when_every_ally_has_committed() {
+        let locked = || ally(Some("locked"), Some("agent"));
+        assert!(roster_fully_locked(&[locked(), locked()]));
+
+        // One ally still picking keeps the roster open.
+        assert!(!roster_fully_locked(&[locked(), ally(Some("selected"), Some("agent"))]));
+        // No selection state at all is not a lock.
+        assert!(!roster_fully_locked(&[locked(), ally(None, Some("agent"))]));
+        // A lock without an agent id is a payload we can't trust as final.
+        assert!(!roster_fully_locked(&[locked(), ally(Some("locked"), None)]));
+        // An empty roster has nothing to have locked.
+        assert!(!roster_fully_locked(&[]));
     }
 
     // --- malformed payloads must error, never become empty lobbies ----
