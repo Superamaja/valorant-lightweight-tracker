@@ -3,6 +3,13 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## v0.1.2 - 2026-08-26
+
+- Added a prominent update button on the waiting screen so you can't miss when
+  a new version is available. The small header chip still appears during matches.
+- Added the PolyForm Noncommercial license.
+- Improved the release pipeline by upgrading to current GitHub Actions versions.
+
 ## v0.1.1 - 2026-08-26
 
 - Improved the release tooling behind the scenes. The app itself works the same

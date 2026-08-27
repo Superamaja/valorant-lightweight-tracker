@@ -1,6 +1,6 @@
 [package]
 name = "valorant-lightweight-tracker"
-version = "0.1.1"
+version = "0.1.2"
 description = "Valorant Lightweight Tracker"
 authors = ["connor"]
 edition = "2021"
