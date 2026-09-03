@@ -121,36 +121,57 @@ pub const SKIN_SOCKET_ID: &str = "bcef87d6-209b-46c6-8b19-fbe40bd95abc";
 /// skin art rather than failing.
 pub const CHROMA_SOCKET_ID: &str = "3ad1b2b2-acdb-4524-852f-954a76ddae0a";
 
-/// Number of recent competitive matches HS% is averaged over (vRY uses 1; we widen the
-/// sample for a steadier figure). match-details are ~500 KB each, so keep this small.
-pub const RECENT_MATCHES_FOR_HS: usize = 5;
+/// How many match-details to fetch concurrently.
+pub const MATCH_DETAILS_CONCURRENCY: usize = 5;
+
+/// Number of recent competitive matches HS% is averaged over.
+pub const RECENT_MATCHES_FOR_HS: usize = 20;
 
 /// Number of W/L pips shown for the "last games" column.
 pub const RECENT_RESULTS_COUNT: usize = 5;
 
-/// `endIndex` for the competitiveupdates request (a small window covering ΔRR + pips +
-/// the match ids HS% reuses). Matches the live probe.
-pub const COMPETITIVE_UPDATES_END_INDEX: u32 = 10;
+/// `endIndex` for the competitiveupdates request.
+pub const COMPETITIVE_UPDATES_END_INDEX: u32 = 20;
 
-/// Small delay between the burst of per-player stat requests at match start, to stay
-/// under Riot's rate limit alongside the existing 429 retry. Milliseconds.
-pub const INTER_REQUEST_DELAY_MS: u64 = 120;
+/// Small delay between the burst of per-player stat requests at match start. Milliseconds.
+pub const INTER_REQUEST_DELAY_MS: u64 = 40;
+
+/// How many pd/mmr requests to run concurrently.
+pub const MMR_CONCURRENCY: usize = 5;
+pub const COMPETITIVE_CONCURRENCY: usize = 5;
 
 /// Map region -> pd/glz shard. shard == region except latam/br -> na; pbe -> na.
-/// (Inferred from valclient.py + vRY's pbe special-case; see spec gaps.)
-pub fn region_to_shard(region: &str) -> &str {
-    match region {
-        "latam" | "br" => "na",
-        "pbe" => "na",
-        other => other,
+pub fn region_to_shard(region: &str) -> String {
+    let norm = normalize_region(region);
+    match norm.as_str() {
+        "latam" | "br" => "na".to_string(),
+        other => other.to_string(),
     }
 }
 
-/// pbe is force-mapped to region `na` for host construction.
-pub fn normalize_region(region: &str) -> &str {
-    match region {
-        "pbe" => "na",
-        other => other,
+/// Normalize a raw region string for host construction: lowercased, trailing
+/// digits stripped (jp1 -> jp, eu1 -> eu), and pbe -> na. Pure.
+pub fn normalize_region(region: &str) -> String {
+    let lower = region.to_ascii_lowercase();
+    if lower == "pbe" {
+        return "na".to_string();
+    }
+    let trimmed = lower.trim_end_matches(|c: char| c.is_ascii_digit());
+    if trimmed.is_empty() {
+        lower
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Derive a region hint from a presence pid domain (e.g. "puuid@jp1.pvp.net" -> "jp").
+pub fn region_from_pid(pid: &str) -> Option<String> {
+    let domain = pid.split('@').nth(1)?;
+    let region_part = domain.split('.').next()?;
+    if region_part.is_empty() {
+        None
+    } else {
+        Some(normalize_region(region_part))
     }
 }
 

@@ -95,6 +95,23 @@ impl LocalClient {
         serde_json::from_value(body).map_err(Error::from)
     }
 
+    /// Try external-sessions for the authoritative deployment.
+    pub async fn deployment_region(&self) -> Option<String> {
+        let body = self.get("/product-session/v1/external-sessions").await.ok()?;
+        extract_region_from_sessions(&body)
+    }
+
+    /// Best-effort region discovery: external-sessions first, then region-locale fallback.
+    pub async fn discover_region(&self) -> Result<String> {
+        if let Some(region) = self.deployment_region().await {
+            vlt_log!("conn", "region from external-sessions: {region}");
+            return Ok(region);
+        }
+        let region = self.region_locale().await?.region;
+        vlt_log!("conn", "region from region-locale: {region}");
+        Ok(region)
+    }
+
     /// Fetch all current presences, optionally handing back the untouched response body
     /// alongside the parsed roster. The body is cloned only when `raw` is set, so the
     /// normal path (`raw == false`) pays nothing — it exists for the dev-only capture
@@ -119,6 +136,66 @@ impl LocalClient {
 /// (a malformed body, a transport failure) is a different problem and fails at once. Pure.
 fn is_starting_up(err: &Error) -> bool {
     matches!(err, Error::NotReady | Error::Http(_))
+}
+
+/// Scan an external-sessions JSON payload for a Valorant deployment hint.
+fn extract_region_from_sessions(value: &Value) -> Option<String> {
+    let text = value.to_string();
+    if let Some(region) = extract_glz_region(&text) {
+        return Some(region);
+    }
+    if let Some(shard) = extract_pd_shard(&text) {
+        return Some(shard);
+    }
+    if let Some(region) = extract_deployment_flag(&text) {
+        return Some(region);
+    }
+    None
+}
+
+fn extract_glz_region(text: &str) -> Option<String> {
+    let glz = text.find("glz-")?;
+    let after = &text[glz + 4..];
+    let end = after.find("-1.")?;
+    let region = &after[..end];
+    if region.is_empty() || !region.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    Some(region.to_ascii_lowercase())
+}
+
+fn extract_pd_shard(text: &str) -> Option<String> {
+    let pd = text.find("pd.")?;
+    let after = &text[pd + 3..];
+    let end = after.find(".a.pvp.net")?;
+    let shard = &after[..end];
+    if shard.is_empty() || !shard.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(shard.to_ascii_lowercase())
+}
+
+fn extract_deployment_flag(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    for key in ["aresdeployment", "ares-deployment", "deployment"] {
+        if let Some(pos) = lower.find(key) {
+            let after = &lower[pos + key.len()..];
+            let mut token = String::new();
+            let mut started = false;
+            for ch in after.chars() {
+                if ch.is_ascii_alphanumeric() {
+                    token.push(ch);
+                    started = true;
+                } else if started {
+                    break;
+                }
+            }
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
+    None
 }
 
 /// True if a local response body is a "client still starting" placeholder.

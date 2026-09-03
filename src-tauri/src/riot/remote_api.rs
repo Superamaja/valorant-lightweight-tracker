@@ -21,8 +21,8 @@ pub struct Hosts {
 
 /// Build hosts from a raw region string. Pure — testable.
 pub fn build_hosts(raw_region: &str) -> Hosts {
-    let region = normalize_region(raw_region).to_string();
-    let shard = region_to_shard(raw_region).to_string();
+    let region = normalize_region(raw_region);
+    let shard = region_to_shard(raw_region);
     Hosts {
         pd: format!("https://pd.{shard}.a.pvp.net"),
         glz: format!("https://glz-{region}-1.{shard}.a.pvp.net"),
