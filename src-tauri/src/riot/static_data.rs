@@ -429,12 +429,12 @@ pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
         return Ok(cached);
     }
 
-    let agents = fetch_list(client, "agents?isPlayableCharacter=true").await?;
-    let maps = fetch_list(client, "maps").await?;
-    let tiers = fetch_list(client, "competitivetiers").await?;
-    // `/weapons` (not `/weapons/skins`) so we can filter to just the Vandal + Phantom skins
-    // by their parent weapon uuid — far smaller than the ~5k-entry full skin list.
-    let weapons = fetch_list(client, "weapons").await?;
+    let (agents, maps, tiers, weapons) = tokio::try_join!(
+        fetch_list(client, "agents?isPlayableCharacter=true"),
+        fetch_list(client, "maps"),
+        fetch_list(client, "competitivetiers"),
+        fetch_list(client, "weapons")
+    )?;
 
     let data = build(version, &agents, &maps, &tiers, &weapons);
     // A payload that parsed to nothing usable (shape change, filtered-away skins) is as bad as

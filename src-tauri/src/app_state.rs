@@ -3,7 +3,7 @@
 //! the game isn't running — that is a normal `ValorantNotRunning` snapshot.
 
 use crate::riot::assemble::{assemble_players, AssembleInput};
-use crate::riot::constants::{game_mode_name, INTER_REQUEST_DELAY_MS};
+use crate::riot::constants::{game_mode_name, INTER_REQUEST_DELAY_MS, MATCH_DETAILS_CONCURRENCY};
 use crate::riot::content;
 use crate::riot::error::{Error, Result};
 use crate::riot::loadout::{self, PlayerSkinIds};
@@ -742,11 +742,49 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
     }
 }
 
+/// Correct hosts from a presence pid domain (e.g. "puuid@jp1.pvp.net" -> region "jp")
+/// only when the initial region was the Riot Client web fallback ("na" while
+/// pid says "jp"). External-sessions is authoritative for every real server
+/// (ap stays ap for JP, not jp), so we must not flip a valid ap->jp on chat pid.
+/// Returns true on change.
+fn correct_hosts_from_pid(session: &mut Session, pid: &str) -> bool {
+    let Some(hint) = crate::riot::constants::region_from_pid(pid) else {
+        return false;
+    };
+    if session.remote.hosts.region != "na" {
+        if hint != session.remote.hosts.region {
+            vlt_log!(
+                "conn",
+                "pid hint {} differs from hosts region {} (shard {}), keeping hosts (external-sessions is authoritative)",
+                hint,
+                session.remote.hosts.region,
+                session.remote.hosts.shard
+            );
+        }
+        return false;
+    }
+    let new_hosts = build_hosts(&hint);
+    if new_hosts == session.remote.hosts {
+        return false;
+    }
+    vlt_log!(
+        "conn",
+        "correcting hosts region {} -> {} (pid {}, shard {} -> {})",
+        session.remote.hosts.region,
+        new_hosts.region,
+        pid,
+        session.remote.hosts.shard,
+        new_hosts.shard
+    );
+    session.remote.hosts = new_hosts;
+    true
+}
+
 /// Build a `Session`: auth, hosts, static data, season id.
 async fn connect(lockfile: Lockfile) -> Result<Session> {
     let local = LocalClient::new(lockfile.clone())?;
     let entitlements = local.entitlements().await?;
-    let region = local.region_locale().await?.region;
+    let region = local.discover_region().await?;
     let hosts = build_hosts(&region);
 
     // Static data (public host, valid TLS).
@@ -1126,6 +1164,13 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
             return Err(Error::NotReady);
         }
     };
+
+    // Self-correct hosts from the authoritative pid domain when region-locale was wrong.
+    if let Some(own_raw) = own {
+        if let Some(pid) = own_raw.pid.as_deref() {
+            correct_hosts_from_pid(session, pid);
+        }
+    }
 
     // Once connected, the client version from own presence is authoritative over the
     // valorant-api.com bootstrap value, which can lag the real client (probe finding).
@@ -1664,30 +1709,42 @@ async fn fetch_phase1(
         progress.publish_progress(cache, true);
     }
 
-    // MMR: per player, only the ones missing, spaced between requests.
+    // MMR: per player, only the ones missing — now concurrent in batches of MMR_CONCURRENCY.
     let missing_mmr: Vec<String> = puuids
         .iter()
         .filter(|p| !cache.mmr.contains_key(*p))
         .cloned()
         .collect();
     vlt_log!("enrich", "phase1: {} mmr to fetch", missing_mmr.len());
-    for (i, puuid) in missing_mmr.iter().enumerate() {
-        if i > 0 {
+    let mut mmr_sent_any = false;
+    for chunk in missing_mmr.chunks(crate::riot::constants::MMR_CONCURRENCY) {
+        if drain_pokes(progress.ctx.rx) {
+            return Ok(false);
+        }
+        if mmr_sent_any {
             tokio::time::sleep(inter_request_delay()).await;
         }
-        let Some(result) =
-            until_poke(progress.ctx.rx, with_rate_limit_retry(gate, || remote.mmr(puuid))).await
+        mmr_sent_any = true;
+        let Some(results) = until_poke(
+            progress.ctx.rx,
+            join_all(
+                chunk.iter().map(|puuid| with_rate_limit_retry(gate, || remote.mmr(puuid)))
+            ),
+        )
+        .await
         else {
             return Ok(false);
         };
-        match result {
-            Ok(v) => {
-                cache.mmr.insert(puuid.clone(), parse_mmr(v));
-                progress.publish_progress(cache, false);
+        for (puuid, result) in chunk.iter().zip(results) {
+            match result {
+                Ok(v) => {
+                    cache.mmr.insert(puuid.clone(), parse_mmr(v));
+                }
+                Err(e) if warrants_token_refresh(&e) => return Err(e),
+                Err(_) => { /* private profile / hiccup -> Unranked for this row only */ }
             }
-            Err(e) if warrants_token_refresh(&e) => return Err(e),
-            Err(_) => { /* private profile / hiccup -> Unranked for this row only */ }
         }
+        progress.publish_progress(cache, false);
     }
     Ok(true)
 }
@@ -1730,13 +1787,18 @@ async fn fetch_phase2(
     // single dead id would be retried once per player, every pass.
     let mut failed_matches: HashSet<String> = HashSet::new();
 
-    // competitiveupdates: one request per player missing history.
+    // competitiveupdates: one request per player missing history — now concurrent in batches of COMPETITIVE_CONCURRENCY.
     let missing_updates: Vec<String> = puuids
         .iter()
         .filter(|p| !cache.updates.contains_key(*p))
         .cloned()
         .collect();
-    for puuid in &missing_updates {
+    vlt_log!(
+        "enrich",
+        "phase2: {} competitiveupdates to fetch",
+        missing_updates.len()
+    );
+    for chunk in missing_updates.chunks(crate::riot::constants::COMPETITIVE_CONCURRENCY) {
         if drain_pokes(progress.ctx.rx) {
             return Ok(Phase2Outcome::Interrupted);
         }
@@ -1744,23 +1806,24 @@ async fn fetch_phase2(
             tokio::time::sleep(inter_request_delay()).await;
         }
         sent_any = true;
-        let Some(result) = until_poke(
+        let Some(results) = until_poke(
             progress.ctx.rx,
-            with_rate_limit_retry(gate, || remote.competitive_updates(puuid)),
+            join_all(chunk.iter().map(|puuid| with_rate_limit_retry(gate, || remote.competitive_updates(puuid)))),
         )
         .await
         else {
             return Ok(Phase2Outcome::Interrupted);
         };
-        match result {
-            Ok(v) => {
-                cache.updates.insert(puuid.clone(), stats::parse_competitive_updates(v));
-                progress.publish_progress(cache, false);
+        for (puuid, result) in chunk.iter().zip(results) {
+            match result {
+                Ok(v) => {
+                    cache.updates.insert(puuid.clone(), stats::parse_competitive_updates(v));
+                }
+                Err(Error::BadClaims) => return Err(Error::BadClaims),
+                Err(_) => partial = true,
             }
-            Err(Error::BadClaims) => return Err(Error::BadClaims),
-            // Transient: leave the entry unset so the retry refetches this player only.
-            Err(_) => partial = true,
         }
+        progress.publish_progress(cache, false);
     }
 
     // HS% + KD: up to RECENT_MATCHES_FOR_HS match-details per player missing them,

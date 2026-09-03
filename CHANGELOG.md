@@ -3,6 +3,11 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## Unreleased
+
+- Fixed region locking issues for non-NA deployments (such as AP/JP/KR) by adding region discovery via external sessions and fallback correction from presence domains.
+- Improved backend rate limit handling and throughput via concurrent batched fetching for static data, MMR, and competitive updates.
+
 ## v0.1.2 - 2026-08-26
 
 - Added a prominent update button on the waiting screen so you can't miss when
