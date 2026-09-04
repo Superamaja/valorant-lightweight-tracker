@@ -3,7 +3,7 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
-## Unreleased
+## v0.1.3 - 2026-09-04
 
 - Added a "Copy diagnostics" link on the waiting screen and in the header during a match.
   If the tracker does not pick up your match, click it and paste the short report into a
