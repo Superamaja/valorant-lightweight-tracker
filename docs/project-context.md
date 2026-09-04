@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-08-26
+Last updated: 2026-09-04
 
 ## Goal
 
@@ -206,6 +206,35 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    - **Waiting-screen footer completed 2026-09-04**: `Report a bug` joined the version and
      `Copy diagnostics`, opening the repo's bug form with the version prefilled, and carrying
      the Simple Icons GitHub mark under the new verbatim-path icon rule.
+11g. ~~**Diagnostics + bug-report session (2026-09-03/04).**~~ **Done, Codex-reviewed, v0.1.3
+   tagged and pushed (workflow run green, see roadmap "Last").** Trigger: a user
+   reported "not detecting my match" with no details and no way to file it (Issues were
+   disabled). Shipped:
+   - `.github/ISSUE_TEMPLATE/bug_report.yml` + `config.yml` (screen / version / region / mode
+     / setup checkboxes / diagnostics paste); README "Troubleshooting" (one paragraph per
+     waiting screen) + "Reporting a bug". **User must enable Issues in repo settings.**
+   - Release-build diagnostics: bounded `Diagnostics` record on `TrackerState`
+     (`src-tauri/src/diagnostics.rs`), written only at existing error/decision points (no
+     per-request cost), rendered by `get_diagnostics` into a plain-text report (lockfile,
+     local API, own presence incl. raw `sessionLoopState`, remote region/shard with the
+     latam/br "inferred" note, websocket; 8-char ids, no secrets; golden + privacy tests).
+     `debug_log::short` is now release code. `windows-version` added as a cfg(windows) dep
+     (already in the lock via tao/wry, no new package).
+   - UI: waiting-screen footer `v{version} · Copy diagnostics · Report a bug` (GitHub mark
+     from Simple Icons), quiet header `Copy diagnostics` while a table shows; textarea
+     fallback (out of flow, `field-sizing-content max-h-40 w-96`) only when the clipboard
+     refuses. Fable visual review via Playwright in browser mode fixed a layout jump, a
+     clipped textarea, and the default blue selection.
+   - Icon sourcing rule added to CLAUDE.md + ui-spec "Icons".
+   - Verification limits this session: the Linux cluster cannot link the Tauri crate
+     (missing GTK/WebKit libs); Rust gates ran in a scratch crate that `#[path]`-includes
+     the real sources against a tauri shim (198 tests, `cargo check --release` clean).
+     Two **pre-existing** `clippy::nonminimal_bool` errors in `MatchCache::is_fresh_for`
+     (`app_state.rs`, `!(ingame && !self.ingame)`) fail `-D warnings` with the current
+     clippy; CI does not run clippy, fix next session.
+   - **Still to live-verify on Windows**: clipboard write from a real release exe
+     (WebView2), the `tauri::webview_version()` line, the Windows build line, and a real
+     report from the affected user. `pnpm build` + browser mode verified here.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
