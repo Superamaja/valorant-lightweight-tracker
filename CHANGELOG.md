@@ -8,6 +8,8 @@ version tag needs an entry here before it can be released.
 - Added a "Copy diagnostics" link on the waiting screen and in the header during a match.
   If the tracker does not pick up your match, click it and paste the short report into a
   GitHub issue; it contains no passwords, tokens or full player ids.
+- Added a "Report a bug" link next to it on the waiting screen. It opens the GitHub bug form
+  with your app version already filled in; paste the diagnostics report into the form.
 
 ## v0.1.2 - 2026-08-26
 

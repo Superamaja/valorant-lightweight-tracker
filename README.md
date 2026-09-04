@@ -88,11 +88,11 @@ reporting.
 
 ## Reporting a bug
 
-Open an issue on the [issues
-page](https://github.com/Superamaja/valorant-lightweight-tracker/issues). Say
-which of the screens above you were stuck on, then press **Copy diagnostics**
-on the waiting screen and paste the report into the issue. That report is what
-turns "it doesn't detect my match" into something fixable.
+Click **Report a bug** at the bottom of the waiting screen, or open the [issues
+page](https://github.com/Superamaja/valorant-lightweight-tracker/issues)
+directly. Say which of the screens above you were stuck on, then press **Copy
+diagnostics** on the waiting screen and paste the report into the issue. That
+report is what turns "it doesn't detect my match" into something fixable.
 
 ## Build from source
 

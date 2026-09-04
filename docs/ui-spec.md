@@ -167,11 +167,15 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
 
 ## Diagnostics line (2026-09-03)
 
-- **Every status screen ends in one quiet 10px row**: `v{version} · Copy diagnostics`, the two
-  separated by a middle dot. The version keeps its job as the manual update check; the second
-  item copies the backend's plain-text report (`get_diagnostics`, see `docs/ipc-contract.md`)
-  for pasting into a GitHub issue. Same weight as the "last updated" text, so the row reads as
-  a footer and not as a second call to action.
+- **Every status screen ends in one quiet 10px row**: `v{version} · Copy diagnostics · Report a
+  bug`, separated by middle dots. The version keeps its job as the manual update check; the
+  second item copies the backend's plain-text report (`get_diagnostics`, see
+  `docs/ipc-contract.md`) for pasting into a GitHub issue. Same weight as the "last updated"
+  text, so the row reads as a footer and not as a second call to action.
+- **The third item carries the Simple Icons GitHub mark (CC0)** and opens the repo's bug form
+  in the browser with the version filled in (`?template=bug_report.yml&version=v…`). The
+  diagnostics report is never put in the URL — it travels by clipboard, so the form's field is
+  where it lands. Waiting screen only; the header does not carry it.
 - **States** are the same on both surfaces: `Copy diagnostics` idle, `Copying` (pulsing,
   disabled) while the report is being built, `Copied` in the win green for two seconds, then
   back to idle. A refused clipboard gives `Copy failed` and stays there until a later copy
@@ -192,6 +196,14 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
   clipboard call is the existing `copyText` from `src/lib/profile.ts`, no new dependency. With
   no backend (plain-browser dev) the copy is a short "diagnostics unavailable" stub rather than
   an error.
+
+## Icons (rule adopted 2026-09-04)
+
+- No icon package (lucide-react, react-icons, etc.): the app ships a handful of glyphs and a package would be dead weight.
+- Never draw, trace, or approximate an icon by hand or by generating path data. Copy the SVG path data **verbatim** from an established permissively licensed set: Lucide (ISC) for UI glyphs, Simple Icons (CC0) for brand marks. Fetch the source file, paste the path(s) unchanged, keep the source `viewBox`.
+- Every icon component carries a one-line comment above the SVG naming the set, the icon name, and the licence (e.g. `/** GitHub mark from Simple Icons (CC0 1.0), path copied verbatim. */`).
+- Icons live in `src/components/primitives.tsx` next to the existing ones, render with `currentColor`, `aria-hidden="true"`, and a size class; they inherit the text colour of their row.
+- The pre-existing hand-drawn glyphs in `primitives.tsx` (`CopyIcon`, `ArrowLeftIcon`, `CheckIcon`) predate this rule; replace them with sourced equivalents only when touching them for another reason.
 
 ## Open items
 

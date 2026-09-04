@@ -19,6 +19,7 @@ Lightweight desktop app showing an in-match player table (ranks, RR, peak rank, 
 - vRY (https://github.com/mdevio/VALORANT-rank-yoinker) is the **reference implementation** for data correctness. When our numbers disagree with vRY, vRY is right until proven otherwise.
 - Do NOT reuse logic from ValoTracker (https://github.com/Londopy/ValoTracker) — user verified its data is wrong.
 - Scope: in-match player table only. Discord RPC is a possible future feature — keep the architecture open to it, but do not build it.
+- **Icons**: never draw or approximate an SVG by hand and never add an icon package. Copy the path data verbatim from an established permissively licensed set (Lucide, Simple Icons) and put a comment above the SVG naming the set, icon, and licence. Details in `docs/ui-spec.md` "Icons".
 - README.md must NEVER contain em-dashes. Rewrite the sentence or use other punctuation (colons, commas, periods, parentheses).
 - Commit messages must never mention Claude, model names (Fable/Opus/Sonnet), or session links.
 - Semantic commits use scopes: `type(scope): summary`. Scopes: `backend` (Rust/Riot pipeline), `ui` (React frontend), `debug` (capture/testing tooling), `release` (pipeline/versioning), `docs`. Example: `fix(backend): poll pregame roster`. Adopted 2026-08-25; older commits are unscoped, leave them.

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { COPY_TITLE, useCopyDiagnostics } from "../hooks/useCopyDiagnostics";
 import { useUpdateState } from "../hooks/useUpdateState";
+import { openBugReport } from "../lib/profile";
 import {
   APP_VERSION,
   runUpdateCheck,
   runUpdateInstall,
   type UpdateCheck,
 } from "../lib/updater";
+import { GitHubIcon } from "./primitives";
 
 export type Tone = "idle" | "live" | "error";
 
@@ -25,6 +27,8 @@ const TONES: Record<Tone, { dot: string; ring: string; glow: string; pulsing: bo
 
 /** How long a finished check's wording stays up before the line falls back to the version. */
 const RESULT_MS = 4000;
+
+const BUG_TITLE = "Open a bug report on GitHub with the version filled in";
 
 function resultText(check: Exclude<UpdateCheck, { state: "available" }>): string {
   switch (check.state) {
@@ -105,8 +109,9 @@ const autoSelect = (field: HTMLTextAreaElement | null) => {
 };
 
 /**
- * The quiet row under the subtitle: the version, and beside it the way to hand a report to
- * whoever is being asked for help. When the clipboard refuses, the report itself appears.
+ * The quiet row under the subtitle: the version, beside it the way to hand a report to whoever
+ * is being asked for help, and last the place to file it. When the clipboard refuses, the
+ * report itself appears.
  */
 function StatusFooter({ screen, heldTable }: { screen: string; heldTable: boolean }) {
   const { phase, label, fallback, copy } = useCopyDiagnostics();
@@ -126,6 +131,16 @@ function StatusFooter({ screen, heldTable }: { screen: string; heldTable: boolea
           } ${phase === "busy" ? "animate-pulse" : ""}`}
         >
           {label}
+        </button>
+        <span aria-hidden="true">·</span>
+        <button
+          type="button"
+          onClick={() => void openBugReport()}
+          title={BUG_TITLE}
+          className="inline-flex items-center gap-1 text-[10px] text-neutral-600 transition-colors hover:text-neutral-300"
+        >
+          <GitHubIcon />
+          Report a bug
         </button>
       </div>
       {fallback !== null && (

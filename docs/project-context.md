@@ -203,6 +203,9 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      instance restarted as v0.1.1).
    - Open verification items unchanged from item 12 + the two-lane fetch and presence
      grace next time the user plays with a debug build.
+   - **Waiting-screen footer completed 2026-09-04**: `Report a bug` joined the version and
+     `Copy diagnostics`, opening the repo's bug form with the version prefilled, and carrying
+     the Simple Icons GitHub mark under the new verbatim-path icon rule.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,
