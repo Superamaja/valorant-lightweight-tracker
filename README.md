@@ -62,6 +62,38 @@ apps; the source is in this repo if you'd rather build it yourself.)
 - **VALORANT running**. The app reads your local Riot client. Launch the game
   (menu is enough), then start the tracker; it will wait until a match begins.
 
+## Troubleshooting
+
+The tracker window tells you where it got stuck. Find the title it is showing
+and try the fixes below.
+
+**"Waiting for VALORANT"** means the tracker cannot reach your local Riot
+client at all. Make sure the Riot Client is actually running and signed in
+(sitting in the VALORANT menu counts), that the game and the tracker run under
+the same Windows user, and that no antivirus or firewall is blocking the
+tracker from talking to the local client. If you run VALORANT as
+administrator, run the tracker as administrator too.
+
+**"Waiting for a match"** means the tracker is connected but your account is
+not in agent select or a live match yet. It only reacts to real matches:
+custom games show up as Custom Game and may not be picked up. If you are
+already in a match and the screen never changes, close the tracker and open it
+again. Accounts on the LATAM and BR servers have not been tested yet, so
+please report it if you play on either.
+
+**"Loading the lobby"** means your match was found but fetching the roster
+from Riot's servers failed or stalled. This is usually temporary: wait a few
+seconds, or restart the tracker. If the table never fills in, that is worth
+reporting.
+
+## Reporting a bug
+
+Open an issue on the [issues
+page](https://github.com/Superamaja/valorant-lightweight-tracker/issues). Say
+which of the screens above you were stuck on, then press **Copy diagnostics**
+on the waiting screen and paste the report into the issue. That report is what
+turns "it doesn't detect my match" into something fixable.
+
 ## Build from source
 
 Requires [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/) and the

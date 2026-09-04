@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Download the latest version
+    url: https://github.com/Superamaja/valorant-lightweight-tracker/releases
+    about: Check that your problem is not already fixed in a newer release before opening an issue.

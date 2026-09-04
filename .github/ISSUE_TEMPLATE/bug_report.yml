@@ -1,0 +1,104 @@
+name: Bug report
+description: Something in the tracker does not work the way it should
+title: "[Bug]: "
+labels:
+  - bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The more of this you fill in, the faster it can
+        be fixed. If the tracker never showed the table, the screen title it
+        was stuck on tells us where the pipeline stopped.
+
+  - type: dropdown
+    id: screen
+    attributes:
+      label: Which screen were you stuck on?
+      description: The title in the middle of the tracker window.
+      options:
+        - Waiting for VALORANT
+        - Waiting for a match
+        - Loading the lobby
+        - The table showed but was wrong or incomplete
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown at the bottom of the waiting screen.
+      placeholder: v0.1.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: region
+    attributes:
+      label: Region / server
+      options:
+        - NA
+        - EU
+        - AP
+        - KR
+        - LATAM
+        - BR
+        - Other/unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Game mode
+      options:
+        - Competitive
+        - Unrated
+        - Swiftplay
+        - Spike Rush
+        - Deathmatch/Team Deathmatch
+        - Custom game
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: setup
+    attributes:
+      label: Any of these apply?
+      description: Tick everything that is true. Leave the rest blank.
+      options:
+        - label: Riot Client / VALORANT runs as administrator
+        - label: VALORANT was already open before I launched the tracker
+        - label: I tried launching the tracker after the match had already started
+        - label: Antivirus or firewall prompted about the tracker
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected and what you got instead.
+      placeholder: |
+        I launched the tracker while in the VALORANT menu, queued competitive,
+        and the window stayed on "Waiting for a match" through all of agent
+        select. I expected the player table to appear.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: >-
+        Press "Copy diagnostics" on the waiting screen (v0.1.3 or newer) and
+        paste the report here.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, timing, anything unusual about your setup.
