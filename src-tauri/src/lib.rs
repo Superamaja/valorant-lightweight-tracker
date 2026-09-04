@@ -1,10 +1,11 @@
-//! Tauri entry point: manages the tracker state, exposes the two commands, and emits the
+//! Tauri entry point: manages the tracker state, exposes the commands, and emits the
 //! `tracker-state` event. All Riot logic lives under `riot`; orchestration in `app_state`.
 
 #[macro_use]
 mod debug_log;
 
 mod app_state;
+mod diagnostics;
 mod riot;
 mod updater;
 
@@ -57,6 +58,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_tracker_state,
             start_tracker,
+            diagnostics::get_diagnostics,
             updater::check_update,
             updater::apply_update
         ])

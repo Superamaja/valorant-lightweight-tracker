@@ -71,6 +71,12 @@ pub fn default_path() -> Option<PathBuf> {
     Some(path)
 }
 
+/// Whether the environment defines `%LOCALAPPDATA%` at all. A machine without it cannot have
+/// a lockfile path to look at, which is a different report from "the client is not running".
+pub fn local_app_data_set() -> bool {
+    std::env::var_os("LOCALAPPDATA").is_some()
+}
+
 /// Read + parse the lockfile from the default path. `LockfileMissing` when the client
 /// is not running (file absent) — a normal state, not a hard error.
 pub fn read() -> Result<Lockfile> {

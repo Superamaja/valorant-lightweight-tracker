@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+import {
+  COPY_FAILED_TITLE,
+  COPY_TITLE,
+  useCopyDiagnostics,
+} from "../hooks/useCopyDiagnostics";
 import { useUpdateState } from "../hooks/useUpdateState";
 import type { AppStatus, TrackerSnapshot } from "../ipc/types";
 import { clockTime, relativeTime } from "../lib/format";
@@ -80,6 +85,29 @@ function UpdateBadge() {
 }
 
 /**
+ * The table's own way to hand over a report, since the version line and its twin live on the
+ * status screens. Quieter than everything around it, and no fallback textarea: a header has
+ * no room for one, and the waiting screen is a click away.
+ */
+function DiagnosticsItem({ screen, heldTable }: { screen: string; heldTable: boolean }) {
+  const { phase, label, copy } = useCopyDiagnostics();
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy({ screen, heldTable })}
+      disabled={phase === "busy"}
+      title={phase === "failed" ? COPY_FAILED_TITLE : COPY_TITLE}
+      className={`text-[10px] transition-colors ${
+        phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
+      } ${phase === "busy" ? "animate-pulse" : ""}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
  * Map, mode, state chip and freshness. The map splash carries the colour. With `lastMatch`
  * the snapshot is a held one from a match that has ended, so the chip must not read as live.
  */
@@ -87,14 +115,17 @@ export function Header({
   snapshot,
   lastMatch = false,
   onLeaveLastMatch,
-  showUpdate = false,
+  overTable = false,
 }: {
   snapshot: TrackerSnapshot | null;
   lastMatch?: boolean;
   /** The way back out of the held table; only meaningful alongside `lastMatch`. */
   onLeaveLastMatch?: () => void;
-  /** Off while a status screen is up: that screen makes the offer itself, in full. */
-  showUpdate?: boolean;
+  /**
+   * Whether rows are on screen. The update offer and the diagnostics link both hang off it:
+   * over a status screen that screen makes them itself, in full.
+   */
+  overTable?: boolean;
 }) {
   const map = snapshot?.map ?? null;
   const chip = lastMatch ? LAST_MATCH : snapshot ? CHIP[snapshot.status] : CONNECTING;
@@ -137,7 +168,15 @@ export function Header({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-3">
-          {showUpdate && <UpdateBadge />}
+          {overTable && (
+            <>
+              <DiagnosticsItem
+                screen={lastMatch ? "Last match table" : "Player table"}
+                heldTable={lastMatch}
+              />
+              <UpdateBadge />
+            </>
+          )}
           {lastMatch && onLeaveLastMatch && (
             <button
               type="button"

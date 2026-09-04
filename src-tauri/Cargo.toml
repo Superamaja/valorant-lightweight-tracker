@@ -31,3 +31,7 @@ base64 = "0.22"
 sha2 = "0.10"
 thiserror = "2"
 
+# Already compiled in through tao/wry, so naming it here adds no code to the build. Only
+# reached by the diagnostics report, which names the OS build a bug report was filed from.
+[target.'cfg(windows)'.dependencies]
+windows-version = "0.1"

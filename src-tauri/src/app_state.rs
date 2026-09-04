@@ -2,6 +2,7 @@
 //! reconnects on loss, and emits a `TrackerSnapshot` on every change. Never crashes when
 //! the game isn't running — that is a normal `ValorantNotRunning` snapshot.
 
+use crate::diagnostics::{Diagnostics, PresenceDiag, SessionDiag};
 use crate::riot::assemble::{assemble_players, AssembleInput};
 use crate::riot::constants::{game_mode_name, INTER_REQUEST_DELAY_MS};
 use crate::riot::content;
@@ -35,6 +36,9 @@ pub trait Emitter: Send + Sync + 'static {
 pub struct TrackerState {
     snapshot: Mutex<TrackerSnapshot>,
     started: AtomicBool,
+    /// What the tracker last saw at each stage, for the diagnostics report. Lock order: the
+    /// snapshot mutex is never held while this one is taken, so the two can never deadlock.
+    pub diagnostics: Mutex<Diagnostics>,
 }
 
 impl Default for TrackerState {
@@ -44,6 +48,7 @@ impl Default for TrackerState {
                 "Waiting for Valorant...".into(),
             ))),
             started: AtomicBool::new(false),
+            diagnostics: Mutex::new(Diagnostics::default()),
         }
     }
 }
@@ -69,6 +74,11 @@ impl TrackerState {
     pub fn begin(&self) -> bool {
         !self.started.swap(true, Ordering::SeqCst)
     }
+
+    /// Record something in the diagnostics. Never call this while holding the snapshot lock.
+    pub fn with_diagnostics(&self, f: impl FnOnce(&mut Diagnostics)) {
+        f(&mut self.diagnostics.lock().unwrap());
+    }
 }
 
 /// Emit + store a snapshot only if it differs from the last one (avoids UI churn). This
@@ -76,13 +86,17 @@ impl TrackerState {
 /// last (a stat group settles, so values fill in and a pending flag clears), while a step
 /// that adds nothing (e.g. a pregame with no recent matches) is silently suppressed.
 fn publish(state: &TrackerState, emitter: &Arc<dyn Emitter>, mut snap: TrackerSnapshot) {
-    {
+    let status_changed = {
         let prev = state.snapshot.lock().unwrap();
         if same_content(&prev, &snap) {
             return;
         }
         #[cfg(debug_assertions)]
         log_publish(prev.status, &snap);
+        prev.status != snap.status
+    };
+    if status_changed {
+        state.with_diagnostics(|d| d.note_status_change());
     }
     snap.last_updated = crate::riot::types::now_millis();
     state.store(snap.clone());
@@ -697,7 +711,9 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
     loop {
         // Phase 1: wait for the lockfile.
         let lockfile = loop {
-            match lockfile::read() {
+            let read = lockfile::read();
+            state.with_diagnostics(|d| d.record_lockfile(&read));
+            match read {
                 Ok(lf) => {
                     vlt_log!("conn", "lockfile found (port {})", lf.port);
                     break lf;
@@ -714,7 +730,7 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
         };
 
         // Phase 2: connect.
-        match connect(lockfile).await {
+        match connect(lockfile, &state).await {
             Ok(mut session) => {
                 vlt_log!(
                     "conn",
@@ -725,11 +741,13 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
                     session.season_id
                 );
                 run_session(&mut session, &state, &emitter).await;
+                state.with_diagnostics(|d| d.session_lost());
             }
             // Underscore-bound: the reason is a dev-log detail only, and the log is compiled
             // out of release builds.
             Err(_err) => {
                 vlt_log!("conn", "connect failed: {:?}", _err);
+                state.with_diagnostics(|d| d.session_lost());
                 publish(
                     &state,
                     &emitter,
@@ -742,12 +760,23 @@ pub async fn tracker_main(state: Arc<TrackerState>, emitter: Arc<dyn Emitter>) {
     }
 }
 
+/// Record a failed connect step in the diagnostics on its way past. Every local call the
+/// connect makes goes through here, so a setup that never gets a session names the step that
+/// stopped it.
+fn step<T>(state: &TrackerState, what: &'static str, result: Result<T>) -> Result<T> {
+    if let Err(err) = &result {
+        state.with_diagnostics(|d| d.record_local_error(what, err));
+    }
+    result
+}
+
 /// Build a `Session`: auth, hosts, static data, season id.
-async fn connect(lockfile: Lockfile) -> Result<Session> {
-    let local = LocalClient::new(lockfile.clone())?;
-    let entitlements = local.entitlements().await?;
-    let region = local.region_locale().await?.region;
+async fn connect(lockfile: Lockfile, state: &TrackerState) -> Result<Session> {
+    let local = step(state, "local client", LocalClient::new(lockfile.clone()))?;
+    let entitlements = step(state, "entitlements", local.entitlements().await)?;
+    let region = step(state, "region-locale", local.region_locale().await)?.region;
     let hosts = build_hosts(&region);
+    let (glz_region, shard) = (hosts.region.clone(), hosts.shard.clone());
 
     // Static data (public host, valid TLS).
     let public = reqwest::Client::builder()
@@ -775,9 +804,28 @@ async fn connect(lockfile: Lockfile) -> Result<Session> {
     // peak-rank act label.
     let seasons = match remote.content().await {
         Ok(content_json) => content::parse_seasons(&content_json),
-        Err(_) => Vec::new(),
+        Err(err) => {
+            state.with_diagnostics(|d| d.record_remote_error("content (shared)", &err));
+            Vec::new()
+        }
     };
     let season_id = content::current_season_id(&seasons).unwrap_or_default();
+
+    // Recorded before the pieces move into the `Session` below.
+    state.with_diagnostics(|d| {
+        d.record_session(SessionDiag {
+            region_raw: region.clone(),
+            region: glz_region,
+            shard,
+            client_version: remote.auth.client_version.clone(),
+            version_from_presence: false,
+            season_known: !season_id.is_empty(),
+            static_complete: static_data.is_complete(),
+            static_version: static_data.version.clone(),
+            own_puuid_short: crate::debug_log::short(&entitlements.subject).to_string(),
+            since: Instant::now(),
+        })
+    });
 
     Ok(Session {
         lockfile,
@@ -840,7 +888,8 @@ fn needs_static_top_up(
 /// it — a failed fetch, or one that comes back still on the older patch, just starts the
 /// cooldown again, so valorant-api catching up hours into a session is still picked up. The
 /// cooldown is what keeps that from becoming a request loop under the 1 s agent-select poll.
-async fn top_up_static_data(session: &mut Session, presence_version: &str) {
+/// Reports whether the held static data was replaced.
+async fn top_up_static_data(session: &mut Session, presence_version: &str) -> bool {
     let last_attempt = session.static_top_up.as_ref().map(|(v, at)| (v.as_str(), at.elapsed()));
     if !needs_static_top_up(
         &session.static_data.version,
@@ -848,14 +897,18 @@ async fn top_up_static_data(session: &mut Session, presence_version: &str) {
         presence_version,
         last_attempt,
     ) {
-        return;
+        return false;
     }
     session.static_top_up = Some((presence_version.to_string(), Instant::now()));
     let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(20)).build() else {
-        return;
+        return false;
     };
-    if let Ok(data) = static_data::fetch(&client).await {
-        session.static_data = data;
+    match static_data::fetch(&client).await {
+        Ok(data) => {
+            session.static_data = data;
+            true
+        }
+        Err(_) => false,
     }
 }
 
@@ -873,7 +926,13 @@ async fn run_session(session: &mut Session, state: &Arc<TrackerState>, emitter: 
     let ws_task = tokio::spawn(async move {
         let mut backoff = 2u64;
         loop {
-            match crate::riot::websocket::run_listener(&ws_lockfile, &own, tx.clone()).await {
+            let listened =
+                crate::riot::websocket::run_listener(&ws_lockfile, &own, tx.clone(), || {
+                    ws_state.with_diagnostics(Diagnostics::record_ws_connected)
+                })
+                .await;
+            ws_state.with_diagnostics(|d| d.record_ws_closed(&listened));
+            match listened {
                 // Connection had come up then dropped — reset the backoff (C8).
                 Ok(()) => backoff = 2,
                 // Never connected — publish a "reconnecting" snapshot at once so a stale
@@ -1049,6 +1108,7 @@ async fn build_and_publish(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Bui
     let streak = session.not_ready_streak;
     session.not_ready_streak =
         next_not_ready_streak(streak, matches!(built, Err(Error::NotReady)));
+    ctx.state.with_diagnostics(|d| d.note_build(session.not_ready_streak));
     match built {
         Ok(outcome) => outcome,
         Err(Error::NotReady) => {
@@ -1072,7 +1132,11 @@ async fn build_and_publish(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Bui
         // `Retry`, so a persistently rejected token can't spin here.
         Err(err) if warrants_token_refresh(&err) => match refresh_tokens(session).await {
             Ok(()) => build_snapshot(session, ctx).await.unwrap_or(BuildOutcome::Retry),
-            Err(_) => BuildOutcome::Retry,
+            Err(err) => {
+                ctx.state
+                    .with_diagnostics(|d| d.record_local_error("entitlements (refresh)", &err));
+                BuildOutcome::Retry
+            }
         },
         // Transient (404 race, local hiccup) — retry on the backoff schedule.
         Err(_) => BuildOutcome::Retry,
@@ -1095,33 +1159,73 @@ async fn fetch_presences(local: &LocalClient) -> Result<Vec<presence::RawPresenc
     Ok(local.presences_with_raw(false).await?.0)
 }
 
+/// What the diagnostics report keeps of one presence read: the roster counts, whether our own
+/// entry was in it, and the raw state fields it carried. The private blob is never kept — only
+/// its length, which is what distinguishes "not published yet" from "we could not read it".
+fn presence_diag(
+    presences: &[presence::RawPresence],
+    own: Option<&presence::RawPresence>,
+    decoded: Option<&Result<PresenceInfo>>,
+) -> PresenceDiag {
+    let mut diag = PresenceDiag {
+        total: presences.len(),
+        valorant: presences.iter().filter(|p| p.is_valorant()).count(),
+        own_found: own.is_some(),
+        product: own.and_then(|p| p.product.clone()),
+        private_len: own.and_then(|p| p.private.as_deref()).unwrap_or("").len(),
+        decode_error: None,
+        session_state: None,
+        queue_id: None,
+        provisioning_flow: None,
+        party_state: None,
+    };
+    match decoded {
+        Some(Ok(info)) => {
+            diag.session_state = info.session_state_raw.clone();
+            diag.queue_id = info.queue_id.clone();
+            diag.provisioning_flow = info.provisioning_flow.clone();
+            diag.party_state = info.party_state.clone();
+        }
+        Some(Err(err)) => diag.decode_error = Some(crate::diagnostics::describe_error(err)),
+        None => {}
+    }
+    diag
+}
+
 /// Build (and publish) a full snapshot for the current state (Menus / Pregame / Ingame).
 /// The returned `BuildOutcome` tells the session loop what to do next (see
 /// `build_and_publish`).
 async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
     session.cache.clear_pregame_lock();
-    let presences = fetch_presences(&session.local).await?;
+    let presences = match fetch_presences(&session.local).await {
+        Ok(presences) => presences,
+        Err(err) => {
+            ctx.state.with_diagnostics(|d| d.record_local_error("presences", &err));
+            return Err(err);
+        }
+    };
     let own = presences
         .iter()
         .find(|p| p.puuid == session.own_puuid && p.is_valorant());
+    let decoded = own.map(presence::info_for);
+    ctx.state
+        .with_diagnostics(|d| d.record_presence(presence_diag(&presences, own, decoded.as_ref())));
     // An absent own presence, or one whose `private` blob is still empty, means the client
     // hasn't published our presence yet — surface NotReady (poll again) rather than
     // defaulting to a Menus render (C10).
-    let info = match own {
-        Some(p) => match presence::info_for(p) {
-            Ok(info) => info,
-            Err(err) => {
-                vlt_log!(
-                    "presence",
-                    "own presence {} unreadable: {:?} (private blob empty={})",
-                    crate::debug_log::short(&p.puuid),
-                    err,
-                    p.private.as_deref().unwrap_or("").is_empty()
-                );
-                return Err(err);
-            }
-        },
-        None => {
+    let info = match (own, decoded) {
+        (_, Some(Ok(info))) => info,
+        (Some(_p), Some(Err(err))) => {
+            vlt_log!(
+                "presence",
+                "own presence {} unreadable: {:?} (private blob empty={})",
+                crate::debug_log::short(&_p.puuid),
+                err,
+                _p.private.as_deref().unwrap_or("").is_empty()
+            );
+            return Err(err);
+        }
+        _ => {
             vlt_log!("presence", "own presence absent from {} presences", presences.len());
             return Err(Error::NotReady);
         }
@@ -1133,7 +1237,12 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
         if v != session.remote.auth.client_version {
             session.remote.set_client_version(v.to_string());
         }
-        top_up_static_data(session, v).await;
+        ctx.state.with_diagnostics(|d| d.note_presence_version(v));
+        if top_up_static_data(session, v).await {
+            ctx.state.with_diagnostics(|d| {
+                d.note_static_data(session.static_data.is_complete(), &session.static_data.version)
+            });
+        }
     }
 
     match info.session_state {
@@ -1227,9 +1336,16 @@ async fn build_match_snapshot(
                     if !ingame {
                         session.cache.pregame_match_id = Some(id.clone());
                     }
+                    ctx.state.with_diagnostics(|d| d.record_match(&id, ingame));
                     id
                 }
                 Err(err) => {
+                    let what = if ingame {
+                        "match-id (glz core-game)"
+                    } else {
+                        "match-id (glz pregame)"
+                    };
+                    ctx.state.with_diagnostics(|d| d.record_remote_error(what, &err));
                     if matches!(err, Error::ResourceNotFound) {
                         vlt_log!("rebuild", "match id 404 (immediate retry spent={})", !retry_404);
                         session.cache.id_retry_spent = true;
@@ -1288,21 +1404,33 @@ async fn build_match_snapshot(
     let match_json = match match_json {
         Ok(value) => value,
         Err(err) => {
+            ctx.state.with_diagnostics(|d| d.record_remote_error("match (glz)", &err));
             if matches!(err, Error::ResourceNotFound) {
                 session.cache.pregame_match_id = None;
             }
             return Err(err);
         }
     };
-    let (players, own_team, map_id): (Vec<MatchPlayer>, Option<String>, Option<String>) = if ingame
-    {
-        // A payload we can't read is an error, not an empty lobby: erroring here happens
-        // BEFORE `begin_match`, so nothing is cached and the loop retries.
-        let data = match_state::extract_coregame(match_json, &own)?;
-        (data.players, data.own_team, data.map_id)
+    let extracted: Result<(Vec<MatchPlayer>, Option<String>, Option<String>)> = if ingame {
+        match_state::extract_coregame(match_json, &own)
+            .map(|data| (data.players, data.own_team, data.map_id))
     } else {
-        let data = match_state::extract_pregame(match_json, &own)?;
-        (data.players, data.own_team, data.map_id)
+        match_state::extract_pregame(match_json, &own)
+            .map(|data| (data.players, data.own_team, data.map_id))
+    };
+    // A payload we can't read is an error, not an empty lobby: erroring here happens BEFORE
+    // `begin_match`, so nothing is cached and the loop retries.
+    let (players, own_team, map_id) = match extracted {
+        Ok(parts) => parts,
+        Err(err) => {
+            let what = if ingame {
+                "match parse (glz core-game)"
+            } else {
+                "match parse (glz pregame)"
+            };
+            ctx.state.with_diagnostics(|d| d.record_remote_error(what, &err));
+            return Err(err);
+        }
     };
 
     // Agent select stops polling once nothing is left to see (see `poll_interval`).
@@ -2586,5 +2714,50 @@ mod tests {
         let mut d = a.clone();
         d.enriched = !a.enriched;
         assert!(!same_content(&a, &d));
+    }
+
+    /// The tests that exercise `publish` read the result back off the state, so nothing needs
+    /// to be captured on the way out.
+    struct NullEmitter;
+
+    impl Emitter for NullEmitter {
+        fn emit(&self, _snapshot: &TrackerSnapshot) {}
+    }
+
+    #[test]
+    fn publishing_a_status_change_moves_status_since() {
+        let state = TrackerState::default();
+        let emitter: Arc<dyn Emitter> = Arc::new(NullEmitter);
+        let started = state.diagnostics.lock().unwrap().status_since;
+
+        // A new message on the same status is still an emit, but the status clock is what the
+        // report calls "since", so it must not restart.
+        publish(&state, &emitter, TrackerSnapshot::not_running(Some("Connecting...".into())));
+        assert_eq!(state.diagnostics.lock().unwrap().status_since, started);
+
+        std::thread::sleep(Duration::from_millis(1));
+        let mut menus = TrackerSnapshot::not_running(None);
+        menus.status = AppStatus::Menus;
+        publish(&state, &emitter, menus);
+        assert!(state.diagnostics.lock().unwrap().status_since > started);
+    }
+
+    #[test]
+    fn a_lockfile_read_is_recorded() {
+        use crate::diagnostics::LockfileState;
+
+        let state = TrackerState::default();
+        {
+            let diagnostics = state.diagnostics.lock().unwrap();
+            assert!(matches!(diagnostics.lockfile, LockfileState::Unchecked));
+            assert!(diagnostics.lockfile_at.is_none());
+        }
+
+        // No Riot Client on a test host, so this is the failing read — which is exactly the
+        // one a bug report needs recorded.
+        state.with_diagnostics(|d| d.record_lockfile(&lockfile::read()));
+        let diagnostics = state.diagnostics.lock().unwrap();
+        assert!(!matches!(diagnostics.lockfile, LockfileState::Unchecked));
+        assert!(diagnostics.lockfile_at.is_some());
     }
 }

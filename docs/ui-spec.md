@@ -165,6 +165,34 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
   backend commands (`check_update` / `apply_update`, see `docs/ipc-contract.md`); clicking
   install downloads, swaps and restarts the app.
 
+## Diagnostics line (2026-09-03)
+
+- **Every status screen ends in one quiet 10px row**: `v{version} · Copy diagnostics`, the two
+  separated by a middle dot. The version keeps its job as the manual update check; the second
+  item copies the backend's plain-text report (`get_diagnostics`, see `docs/ipc-contract.md`)
+  for pasting into a GitHub issue. Same weight as the "last updated" text, so the row reads as
+  a footer and not as a second call to action.
+- **States** are the same on both surfaces: `Copy diagnostics` idle, `Copying` (pulsing,
+  disabled) while the report is being built, `Copied` in the win green for two seconds, then
+  back to idle. A refused clipboard gives `Copy failed` and stays there until a later copy
+  works.
+- **Fallback**: on `Copy failed` the status screen prints the report under the row in a
+  read-only, pre-selected, `select-text` monospace textarea with a `Select all and copy` hint,
+  because the users who need the report are the ones whose setup is broken. It is a fixed
+  384px wide, grows with the report to a 160px cap, and sits out of flow below the row so the
+  centred title/ring/subtitle stack does not move when it appears.
+- **Over a table the header carries it instead**, quietly: the same item, same weight, left of
+  the update chip so the chip keeps the priority. No textarea there. It appears only while rows
+  are on screen (live Pregame/Ingame, or the held last-match table) and renders nothing
+  otherwise, so an ordinary match header is unchanged.
+- The report needs to know what the user is looking at, which is the one thing the backend
+  cannot see: the frontend sends the visible screen title, or `Player table` / `Last match
+  table` from the header, plus whether a held table is in play. `App` already knows both.
+- Behaviour lives in `src/hooks/useCopyDiagnostics.ts` so the two surfaces cannot drift; the
+  clipboard call is the existing `copyText` from `src/lib/profile.ts`, no new dependency. With
+  no backend (plain-browser dev) the copy is a short "diagnostics unavailable" stub rather than
+  an error.
+
 ## Open items
 
 - User may still provide reference images; revisit style section when they do.

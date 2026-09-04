@@ -9,6 +9,9 @@
 //! Call-site rule: never introduce a binding solely to feed `vlt_log!` — in release the
 //! swallowed tokens would leave it unused. Inline the expression into the macro call instead,
 //! or gate the binding with `#[cfg(debug_assertions)]`.
+//!
+//! `short` is the one exception: it is release code too, because the diagnostics report
+//! truncates ids by the same rule.
 
 /// Log one line under `category` (`state`, `rebuild`, `net`, `enrich`, `presence`, `ws`,
 /// `conn`).
@@ -48,18 +51,20 @@ mod imp {
     pub fn next_request_seq() -> u32 {
         REQUEST_SEQ.fetch_add(1, Ordering::Relaxed)
     }
-
-    /// The first 8 characters of an id, for logs where the full puuid/match id is noise.
-    /// Never splits a multi-byte character; an id shorter than that is returned whole.
-    pub fn short(id: &str) -> &str {
-        id.get(..8).unwrap_or(id)
-    }
 }
 
 #[cfg(debug_assertions)]
-pub use imp::{log_line, next_request_seq, short};
+pub use imp::{log_line, next_request_seq};
 
-#[cfg(all(test, debug_assertions))]
+/// The first 8 characters of an id, for anywhere the full puuid/match id is noise: the dev
+/// console log, and the release diagnostics report, which truncates by the same rule.
+/// Compiled into every profile. Never splits a multi-byte character; an id shorter than that
+/// is returned whole.
+pub fn short(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+#[cfg(test)]
 mod tests {
     use super::short;
 

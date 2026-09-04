@@ -1,12 +1,12 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-08-26 (auto-updater: `check_update`, `apply_update`).
+Last updated: 2026-09-03 (diagnostics: `get_diagnostics`).
 Status: backend implemented; this is the
 exact TypeScript-facing contract the UI agent builds against. Everything the frontend
 receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
 
-The backend exposes **four Tauri commands** (two for the tracker, two for the auto-updater)
-and emits **one Tauri event**. All payloads are `serde`-serialized with `camelCase` field
+The backend exposes **five Tauri commands** (two for the tracker, two for the auto-updater,
+one for the diagnostics report) and emits **one Tauri event**. All payloads are `serde`-serialized with `camelCase` field
 names.
 
 ---
@@ -34,6 +34,33 @@ const snapshot = await invoke<TrackerSnapshot>("get_tracker_state");
 
 Returns the current `TrackerSnapshot` on demand (same shape the event carries). Use it once
 on mount to render immediately without waiting for the next event.
+
+### `get_diagnostics`
+
+```ts
+interface UiFacts { screen: string; heldTable: boolean }
+const report = await invoke<string>("get_diagnostics", { ui });
+```
+
+Returns a **preformatted plain-text report** of what the tracker last saw at each stage
+(lockfile, local API, own presence, remote hosts, websocket), for the user to paste into a
+GitHub issue. `ui` carries the two things only the frontend knows: `screen` is the line the
+user is looking at (which is what says what is on screen), `heldTable` whether a finished
+match's table is retained and can be viewed.
+
+The text layout is **not** a contract: it is meant to be read by a human, and it changes
+whenever a new failure mode is worth naming. What is guaranteed:
+
+- It **never** contains the lockfile password, an access/entitlements token, the private
+  presence blob, a full puuid or match id (both are cut to 8 characters), a full URL, or any
+  filesystem path (the lockfile path is printed unexpanded, so no Windows username appears).
+- Every error in it has gone through one redaction step that strips URLs and bounds the
+  length, so a transport error carrying a puuid in its URL cannot leak one.
+- It is available in **release builds too** — it is the release counterpart of the dev
+  console log.
+
+Reads the current state and returns; it does no IO and **never rejects in practice**. Available
+from the moment the app starts, before `start_tracker` has resolved anything.
 
 ### `check_update`
 

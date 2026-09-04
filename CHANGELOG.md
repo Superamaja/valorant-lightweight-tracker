@@ -3,6 +3,12 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## Unreleased
+
+- Added a "Copy diagnostics" link on the waiting screen and in the header during a match.
+  If the tracker does not pick up your match, click it and paste the short report into a
+  GitHub issue; it contains no passwords, tokens or full player ids.
+
 ## v0.1.2 - 2026-08-26
 
 - Added a prominent update button on the waiting screen so you can't miss when

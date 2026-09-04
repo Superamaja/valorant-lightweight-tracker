@@ -53,6 +53,10 @@ pub fn parse_presence_event(text: &str, own_puuid: &str) -> Option<Poke> {
 /// presence over REST on every poke, so there's no reason to ship the presence struct across
 /// the channel.
 ///
+/// `on_connected` runs once the subscription is in, which is the only point at which a caller
+/// can tell a live connection from one still being attempted — the return value comes at the
+/// other end of the connection's life.
+///
 /// Returns `Ok(())` once a connection was established and later closed (so the caller can
 /// reset its reconnect backoff — C8), and `Err` only when the connection could not be
 /// established at all.
@@ -60,6 +64,7 @@ pub async fn run_listener(
     lockfile: &Lockfile,
     own_puuid: &str,
     tx: mpsc::Sender<Poke>,
+    on_connected: impl FnOnce(),
 ) -> Result<()> {
     let mut request = lockfile
         .local_ws_url()
@@ -91,6 +96,7 @@ pub async fn run_listener(
         .await
         .map_err(|e| Error::WebSocket(e.to_string()))?;
     vlt_log!("ws", "connected + subscribed");
+    on_connected();
 
     while let Some(msg) = read.next().await {
         match msg {

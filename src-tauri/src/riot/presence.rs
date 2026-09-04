@@ -43,6 +43,9 @@ impl RawPresence {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PresenceInfo {
     pub session_state: Option<SessionLoopState>,
+    /// The `sessionLoopState` string exactly as it arrived, so a value we do not recognize is
+    /// still reportable (`session_state` is `None` for it). Diagnostics only.
+    pub session_state_raw: Option<String>,
     pub party_state: Option<String>,
     pub provisioning_flow: Option<String>,
     pub queue_id: Option<String>,
@@ -87,9 +90,10 @@ fn dual<'a>(decoded: &'a Value, nested_parent: &str, key: &str) -> Option<&'a Va
 
 /// Extract the useful fields from a decoded private presence, handling both shapes.
 pub fn extract_info(decoded: &Value) -> PresenceInfo {
-    let session_state = dual(decoded, "matchPresenceData", "sessionLoopState")
+    let session_state_raw = dual(decoded, "matchPresenceData", "sessionLoopState")
         .and_then(|v| v.as_str())
-        .and_then(SessionLoopState::from_str);
+        .map(String::from);
+    let session_state = session_state_raw.as_deref().and_then(SessionLoopState::from_str);
 
     let party_state = dual(decoded, "partyPresenceData", "partyState")
         .and_then(|v| v.as_str())
@@ -121,6 +125,7 @@ pub fn extract_info(decoded: &Value) -> PresenceInfo {
 
     PresenceInfo {
         session_state,
+        session_state_raw,
         party_state,
         provisioning_flow,
         queue_id,
@@ -200,6 +205,7 @@ mod tests {
         });
         let info = extract_info(&decoded);
         assert_eq!(info.session_state, Some(SessionLoopState::Ingame));
+        assert_eq!(info.session_state_raw.as_deref(), Some("INGAME"));
         assert_eq!(info.queue_id.as_deref(), Some("competitive"));
         assert_eq!(info.account_level, Some(275));
         assert_eq!(info.party_id.as_deref(), Some("party-1"));
@@ -218,9 +224,23 @@ mod tests {
         });
         let info = extract_info(&decoded);
         assert_eq!(info.session_state, Some(SessionLoopState::Pregame));
+        assert_eq!(info.session_state_raw.as_deref(), Some("PREGAME"));
         assert_eq!(info.queue_id.as_deref(), Some("unrated"));
         assert_eq!(info.account_level, Some(42));
         assert_eq!(info.party_size, Some(1));
+    }
+
+    #[test]
+    fn an_unknown_session_state_keeps_its_raw_value() {
+        // A state Riot adds (or renames) must not silently read as "no state at all" in a
+        // bug report: the tracker treats it as unknown, the diagnostics still name it.
+        let info = extract_info(&json!({ "sessionLoopState": "SPECTATE" }));
+        assert_eq!(info.session_state, None);
+        assert_eq!(info.session_state_raw.as_deref(), Some("SPECTATE"));
+        // An absent field stays absent in both.
+        let absent = extract_info(&json!({}));
+        assert_eq!(absent.session_state, None);
+        assert_eq!(absent.session_state_raw, None);
     }
 
     #[test]

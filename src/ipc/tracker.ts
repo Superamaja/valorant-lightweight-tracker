@@ -1,4 +1,7 @@
-/** The whole backend surface: two commands and one event. See `docs/ipc-contract.md`. */
+/**
+ * The tracker feed: two commands and one event. The rest of the backend surface sits beside
+ * it, in `ipc/diagnostics.ts` and `lib/updater.ts`. See `docs/ipc-contract.md`.
+ */
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";

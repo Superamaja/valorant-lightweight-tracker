@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { COPY_TITLE, useCopyDiagnostics } from "../hooks/useCopyDiagnostics";
 import { useUpdateState } from "../hooks/useUpdateState";
 import {
   APP_VERSION,
@@ -89,12 +90,59 @@ function VersionLine() {
       onClick={runUpdateCheck}
       disabled={busy}
       title={installError ?? "Check for updates"}
-      className={`mt-6 text-[10px] tabular-nums text-neutral-600 transition-colors hover:text-neutral-300 ${
+      className={`text-[10px] tabular-nums text-neutral-600 transition-colors hover:text-neutral-300 ${
         busy ? "animate-pulse" : ""
       }`}
     >
       {shown ? resultText(shown) : `v${APP_VERSION}`}
     </button>
+  );
+}
+
+/** Nothing to read, everything to copy: the textarea exists to be select-all'd. */
+const autoSelect = (field: HTMLTextAreaElement | null) => {
+  field?.select();
+};
+
+/**
+ * The quiet row under the subtitle: the version, and beside it the way to hand a report to
+ * whoever is being asked for help. When the clipboard refuses, the report itself appears.
+ */
+function StatusFooter({ screen, heldTable }: { screen: string; heldTable: boolean }) {
+  const { phase, label, fallback, copy } = useCopyDiagnostics();
+
+  return (
+    <div className="relative mt-6 flex flex-col items-center">
+      <div className="flex items-center gap-2 text-[10px] text-neutral-600">
+        <VersionLine />
+        <span aria-hidden="true">·</span>
+        <button
+          type="button"
+          onClick={() => void copy({ screen, heldTable })}
+          disabled={phase === "busy"}
+          title={COPY_TITLE}
+          className={`text-[10px] transition-colors ${
+            phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
+          } ${phase === "busy" ? "animate-pulse" : ""}`}
+        >
+          {label}
+        </button>
+      </div>
+      {fallback !== null && (
+        // Out of flow, so the report appearing never moves the centred stack above it.
+        <div className="absolute top-full left-1/2 mt-2 flex -translate-x-1/2 flex-col items-center">
+          <textarea
+            readOnly
+            value={fallback}
+            // A later report is a new field, so it gets selected the same way the first did.
+            key={fallback}
+            ref={autoSelect}
+            className="max-h-40 w-96 resize-none rounded-sm border border-edge bg-white/[0.03] p-2 font-mono text-[10px] leading-snug text-neutral-400 field-sizing-content select-text selection:bg-white/15 selection:text-neutral-200 focus:outline-none"
+          />
+          <p className="mt-1 text-[10px] text-neutral-600">Select all and copy</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -109,12 +157,15 @@ export function StatusScreen({
   subtitle,
   tone,
   action,
+  heldTable = false,
 }: {
   title: string;
   subtitle?: string | null;
   tone: Tone;
   /** Optional side door out of the waiting screen — today, the held last-match table. */
   action?: StatusAction | null;
+  /** Whether a finished match's table is waiting behind this screen; for the report only. */
+  heldTable?: boolean;
 }) {
   const style = TONES[tone];
 
@@ -149,7 +200,7 @@ export function StatusScreen({
           </button>
         )}
         <UpdateCallToAction />
-        <VersionLine />
+        <StatusFooter screen={title} heldTable={heldTable} />
       </div>
     </div>
   );

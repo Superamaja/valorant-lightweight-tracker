@@ -54,6 +54,7 @@ function screen(
                 snapshot.message ?? "Connected. The table fills in the moment agent select opens."
               }
               action={held ? { label: "View last match", onClick: onShowHeld } : null}
+              heldTable={held !== null}
             />,
           );
     default:
@@ -97,7 +98,7 @@ export default function App() {
         snapshot={viewingHeld ? held : snapshot}
         lastMatch={viewingHeld}
         onLeaveLastMatch={() => setShowHeld(false)}
-        showUpdate={main.table}
+        overTable={main.table}
       />
       <main className="min-h-0 flex-1 overflow-auto">{main.content}</main>
     </div>

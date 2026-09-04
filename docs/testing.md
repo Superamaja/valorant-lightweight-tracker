@@ -3,7 +3,8 @@
 Three dev-only affordances for working on the app. All are absent from release builds: the
 frontend branch sits behind `import.meta.env.DEV` (tree-shaken out of `dist/`), and the backend
 capture plus the console log behind `#[cfg(debug_assertions)]` (never compiled into a release
-binary).
+binary). The diagnostics report at the end is the exception: it ships in every build, and it is
+what a user can send when the console log is not there to read.
 
 ## 1. UI-only testing in a plain browser
 
@@ -96,6 +97,34 @@ the release-shaped frontend baked in (real CSP, no Vite dev server) but all thre
 above still compiled in, plus devtools (Ctrl+Shift+I). Run it from a terminal to get the live
 console log without `pnpm tauri dev`; it is also the artifact for the release-shaped CSP smoke
 test (see roadmap).
+
+## Diagnostics report (all builds)
+
+The release counterpart of the console log above, and the only one users have. `Copy diagnostics`
+copies a short plain-text report of what the tracker last saw at each stage (lockfile, local API,
+own presence, remote, websocket), plus the app version, OS, WebView2 version, current status and
+which screen the user was on. One slot per category, overwritten as it goes: it is a snapshot of
+the last thing that happened, not a log.
+
+Where the button is:
+
+- on every status screen, beside the version line (`Waiting for a match`, `Waiting for VALORANT`,
+  `Starting`, `The tracker stopped`);
+- in the header while a table is up, live or held, left of the update chip.
+
+Both copy the same report; only the `screen` line differs. If the clipboard refuses (rare, but the
+users who need this are the ones with broken setups) the status screen prints the report into a
+read-only textarea, pre-selected, so it can be copied by hand. The header has no textarea; the
+status screen behind it does.
+
+Privacy matches the console log's rule. puuids and match ids keep their first 8 characters, the
+lockfile path is printed as the literal `%LOCALAPPDATA%\...` rather than the real one, and the
+lockfile password, tokens, entitlements and the presence `private` blob never reach it. Error text
+is normalised before it is printed, so URLs (which can carry a puuid) are cut out.
+
+In the plain-browser dev run of section 1 there is no backend, so the button copies a short
+`diagnostics unavailable` stub with the app version and the invoke error instead of a report. That
+is the expected behaviour there, not a bug.
 
 ## Git
 
