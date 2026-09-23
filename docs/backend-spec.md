@@ -490,6 +490,21 @@ serde camelCase names are in `docs/ipc-contract.md`.
   1 request/player. ΔRR = `Matches[0].RankedRatingEarned`; pips from each match's
   `RankedRatingEarned` sign, **0-RR → `Unknown`** (ambiguous, per the task's edge note; vRY
   reads sign only). `AFKPenalty`/`RRPenalty` fields are present but not used for the pip.
+  **Real outcomes (deliberate deviation from vRY):** the match-details payloads HS%/KD already
+  download carry each match's result, so a pip whose match has been parsed is replaced by the
+  real outcome instead of the RR-sign guess. `stats::match_contribution` reads `teams[]` (each
+  `{ teamId, won, roundsWon, ... }`) against the player's `players[].teamId`: own team won ->
+  `Win`, another team won -> `Loss`, no team won -> `Draw` (new `MatchResult` variant). A
+  payload without `teams[]`, or a player without `teamId`, yields no outcome. Schema source:
+  techchrism valorant-api-docs, `GET MatchDetails_FetchMatchDetails` (`players[].teamId`,
+  `teams[].won`); no live capture in the repo carries these fields yet. The per-match cache
+  keeps one `Option<MatchResult>` per player (`stats::PlayerMatch { totals, result }`), so
+  zero extra requests. `RrHistory.result_match_ids` records each pip's match id; after a
+  player's window resolves (any yield, including a `RecentStatsCache` hit), `fetch_phase2`
+  calls `MatchDetailsCache::upgrade_pips`, which overwrites only the pips whose match is held.
+  Matches that 404'd, failed, fell outside the window, or were evicted keep the RR result.
+  Pips still appear as soon as competitiveupdates lands (`pending.history` clears then); the
+  upgrade rides the next progress or final snapshot, so no new pending flag and no row waits.
 - **HS%** — replicates vRY `player_stats._process_match_data` exactly: sum
   `headshots / (headshots+bodyshots+legshots)` across every round's `damage` entries for the
   player, `round()` to int, "N/a" when no hits. **The match id list is reused from the
@@ -498,7 +513,7 @@ serde camelCase names are in `docs/ipc-contract.md`.
   (competitiveupdates already carries the ids). `RECENT_MATCHES_FOR_HS = 5` match-details per
   uncached player (vRY uses 1; widened for a steadier figure — constant in `constants.rs`).
   match-details are ~500 KB, so HS% is **cached per puuid keyed by newest competitive match
-  id** in a session-lived `HsCache` (survives match→menus→match; self-invalidates when the
+  id** in a session-lived `RecentStatsCache` (survives match→menus→match; self-invalidates when the
   player plays a new comp match). Deviation from the wishlist's "match-history + match-details"
   wording: match-history is not fetched — competitiveupdates supplies the ids for free.
 - **KD (2026-08-25)** — total kills / total deaths over the **same** `RECENT_MATCHES_FOR_HS`
@@ -522,6 +537,12 @@ serde camelCase names are in `docs/ipc-contract.md`.
   the figures from the matches that arrived (nothing arrived -> no entry, N/A). A partial window
   of either kind is never written to `RecentStatsCache`, so the next lobby recomputes it; the
   per-match cache means only the missing ids cost a request.
+- **Window size on the row** — `PlayerRow.stats_matches` (`statsMatches`) is the number of
+  matches the HS%/KD window was computed from: the count of window matches that arrived
+  (parsed now or served from `MatchDetailsCache`), so a full window is
+  `RECENT_MATCHES_FOR_HS` (5) and a partial one fewer. It is `None` whenever both figures are
+  `None`. It lives in `RecentStats.matches`, so a `RecentStatsCache` hit carries the count its
+  window was built from. The UI dims HS%/KD below the full window.
 - **Vandal + Phantom skins** — `GET /core-game/v1/matches/{id}/loadouts`, 1 request/match,
   **INGAME only** (pregame/menus → `null`). Path `Loadouts[].Loadout.Items["<weapon
   uuid>"].Sockets["bcef87d6-…"].Item.ID` → skin uuid → `/v1/weapons/skins` cache for name +

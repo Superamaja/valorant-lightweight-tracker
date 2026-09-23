@@ -78,12 +78,14 @@ pub struct WinRate {
     pub games: u32,
 }
 
-/// Outcome of one recent competitive match, derived from `RankedRatingEarned` sign.
-/// A 0-RR match is genuinely ambiguous (vRY reads sign only) -> `Unknown`.
+/// Outcome of one recent competitive match: the real result from match-details when those
+/// were downloaded, else inferred from the `RankedRatingEarned` sign. A 0-RR match without
+/// details is genuinely ambiguous -> `Unknown`; `Draw` only ever comes from match-details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchResult {
     Win,
     Loss,
+    Draw,
     Unknown,
 }
 
@@ -158,7 +160,7 @@ pub struct PlayerRow {
     pub win_rate: Option<WinRate>,
     /// ΔRR of the player's newest competitive match, or null when no recent comp match.
     pub rr_change: Option<i32>,
-    /// Up to 5 most recent competitive results, newest first (Win/Loss/Unknown). Empty
+    /// Up to 5 most recent competitive results, newest first (Win/Loss/Draw/Unknown). Empty
     /// when the player has no recent competitive matches.
     pub recent_results: Vec<MatchResult>,
     /// Headshot percentage across the last N recent competitive matches (0-100), or null
@@ -167,6 +169,9 @@ pub struct PlayerRow {
     /// Kills/deaths across the same recent competitive matches HS% is computed from,
     /// rounded to 2 decimals, or null when those matches carry no stats for the player.
     pub kd: Option<f64>,
+    /// How many recent matches HS% and KD were computed from (`RECENT_MATCHES_FOR_HS` for a
+    /// full window, fewer for a partial one), or null when both figures are null.
+    pub stats_matches: Option<u32>,
     /// Equipped Vandal skin (INGAME only; null in pregame/menus).
     pub vandal_skin: Option<SkinInfo>,
     /// Equipped Phantom skin (INGAME only; null in pregame/menus).

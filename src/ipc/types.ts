@@ -5,8 +5,14 @@
 
 export type AppStatus = "ValorantNotRunning" | "Menus" | "Pregame" | "Ingame";
 
-/** Outcome of one recent competitive match. "Unknown" = 0-RR match (ambiguous sign). */
-export type MatchResult = "Win" | "Loss" | "Unknown";
+/**
+ * Outcome of one recent competitive match. Real result when the match-details were read,
+ * else the RR sign. "Draw" only comes from match-details; "Unknown" = 0-RR match without them.
+ */
+export type MatchResult = "Win" | "Loss" | "Draw" | "Unknown";
+
+/** Matches in a full HS%/KD window. `statsMatches` below this means a partial window. */
+export const STATS_WINDOW = 5;
 
 /** Pregame agent-pick state. Riot's raw string, known values "locked" | "selected". */
 export const LOCKED = "locked";
@@ -89,6 +95,11 @@ export interface PlayerRow {
   headshotPercent: number | null;
   /** Kills/deaths over the same match window as `headshotPercent`, rounded to 2 decimals. */
   kd: number | null;
+  /**
+   * Matches HS% and KD were computed from (`STATS_WINDOW` when full), null when both are null.
+   * Absent on snapshots captured before it existed.
+   */
+  statsMatches: number | null;
   vandalSkin: SkinInfo | null;
   phantomSkin: SkinInfo | null;
 }

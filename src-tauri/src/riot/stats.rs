@@ -16,8 +16,11 @@ use std::collections::HashMap;
 pub struct RrHistory {
     /// ΔRR of the newest competitive match, or None when there are no matches.
     pub rr_change: Option<i32>,
-    /// Up to `RECENT_RESULTS_COUNT` most recent results, newest first.
+    /// Up to `RECENT_RESULTS_COUNT` most recent results, newest first. Inferred from the RR
+    /// sign until `apply_outcomes` replaces them with the real ones from match-details.
     pub results: Vec<MatchResult>,
+    /// The match id each entry of `results` belongs to (empty when the payload carried none).
+    pub result_match_ids: Vec<String>,
     /// Up to `RECENT_MATCHES_FOR_HS` most recent match ids, newest first (for HS%).
     pub recent_match_ids: Vec<String>,
 }
@@ -26,6 +29,16 @@ impl RrHistory {
     /// The newest competitive match id (Matches[0]), if any — the HS% cache key.
     pub fn newest_match_id(&self) -> Option<&str> {
         self.recent_match_ids.first().map(String::as_str)
+    }
+
+    /// Replace each pip whose match has a known outcome with it; the rest keep their
+    /// RR-inferred result.
+    pub fn apply_outcomes(&mut self, outcome: impl Fn(&str) -> Option<MatchResult>) {
+        for (result, id) in self.results.iter_mut().zip(&self.result_match_ids) {
+            if let Some(real) = outcome(id) {
+                *result = real;
+            }
+        }
     }
 }
 
@@ -59,12 +72,12 @@ pub fn result_from_rr(earned: i32) -> MatchResult {
 pub fn parse_competitive_updates(value: Value) -> RrHistory {
     let wire: CompetitiveUpdatesWire = serde_json::from_value(value).unwrap_or_default();
     let rr_change = wire.matches.first().map(|m| m.ranked_rating_earned);
-    let results = wire
+    let (results, result_match_ids) = wire
         .matches
         .iter()
         .take(RECENT_RESULTS_COUNT)
-        .map(|m| result_from_rr(m.ranked_rating_earned))
-        .collect();
+        .map(|m| (result_from_rr(m.ranked_rating_earned), m.match_id.clone()))
+        .unzip();
     let recent_match_ids = wire
         .matches
         .iter()
@@ -72,7 +85,7 @@ pub fn parse_competitive_updates(value: Value) -> RrHistory {
         .take(RECENT_MATCHES_FOR_HS)
         .map(|m| m.match_id.clone())
         .collect();
-    RrHistory { rr_change, results, recent_match_ids }
+    RrHistory { rr_change, results, result_match_ids, recent_match_ids }
 }
 
 // --- match-details accounting (HS% + KD) ------------------------------------
@@ -85,6 +98,8 @@ pub struct RecentStats {
     pub headshot_percent: Option<u32>,
     /// Kills/deaths over the same window, 2 decimals, or None.
     pub kd: Option<f64>,
+    /// How many matches the window was computed from, or None when both figures are None.
+    pub matches: Option<u32>,
 }
 
 /// Running totals for one player across one or more match-details payloads: head/body/leg
@@ -101,9 +116,17 @@ pub struct MatchTotals {
     pub kd_matches: u32,
 }
 
+/// What one match-details payload contributes to one player.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlayerMatch {
+    pub totals: MatchTotals,
+    /// The player's real outcome, or None when the payload carried no team results for them.
+    pub result: Option<MatchResult>,
+}
+
 /// What one match-details payload contributes to each player who appears in it, keyed by
 /// puuid. This is all the caller keeps of a ~500 KB response.
-pub type MatchContribution = HashMap<String, MatchTotals>;
+pub type MatchContribution = HashMap<String, PlayerMatch>;
 
 impl MatchTotals {
     /// Fold another match's totals into this window.
@@ -146,9 +169,13 @@ impl MatchTotals {
         Some((ratio * 100.0).round() / 100.0)
     }
 
-    /// The display-ready pair this player's recent matches yield.
-    pub fn recent_stats(&self) -> RecentStats {
-        RecentStats { headshot_percent: self.headshot_percent(), kd: self.kd() }
+    /// The display-ready figures this player's recent matches yield, `matches` being how
+    /// many matches were folded into these totals.
+    pub fn recent_stats(&self, matches: usize) -> RecentStats {
+        let headshot_percent = self.headshot_percent();
+        let kd = self.kd();
+        let matches = (headshot_percent.is_some() || kd.is_some()).then_some(matches as u32);
+        RecentStats { headshot_percent, kd, matches }
     }
 }
 
@@ -156,11 +183,13 @@ impl MatchTotals {
 /// every damage entry of every round's `playerStats` (replicating vRY `player_stats.py`), plus
 /// the kills/deaths the top-level `players[]` entry already carries. Every player is read in
 /// the one pass, so a match several lobby members played is parsed — and downloaded — once.
+/// Each player's real outcome comes from `teams[].won` against their `players[].teamId`.
 /// Borrows `value` (no deep clone). Missing fields default to 0.
 pub fn match_contribution(value: &Value) -> MatchContribution {
     let mut out = MatchContribution::new();
     collect_hits(&mut out, value);
     collect_kills_deaths(&mut out, value);
+    collect_results(&mut out, value);
     out
 }
 
@@ -179,7 +208,7 @@ fn collect_hits(out: &mut MatchContribution, value: &Value) {
             let Some(damage) = ps.get("damage").and_then(|d| d.as_array()) else {
                 continue;
             };
-            let acc = out.entry(subject.to_string()).or_default();
+            let acc = &mut out.entry(subject.to_string()).or_default().totals;
             for d in damage {
                 acc.head += d.get("headshots").and_then(|v| v.as_u64()).unwrap_or(0);
                 acc.body += d.get("bodyshots").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -202,10 +231,41 @@ fn collect_kills_deaths(out: &mut MatchContribution, value: &Value) {
         let Some(player_stats) = player.get("stats") else {
             continue;
         };
-        let acc = out.entry(subject.to_string()).or_default();
+        let acc = &mut out.entry(subject.to_string()).or_default().totals;
         acc.kills += player_stats.get("kills").and_then(|v| v.as_u64()).unwrap_or(0);
         acc.deaths += player_stats.get("deaths").and_then(|v| v.as_u64()).unwrap_or(0);
         acc.kd_matches += 1;
+    }
+}
+
+/// A player whose team won gets `Win`, one whose team lost to another gets `Loss`, and a
+/// match no team won is a `Draw`. Without a `teams[]` array (or a `teamId` on the player)
+/// the outcome stays unknown to this payload.
+fn collect_results(out: &mut MatchContribution, value: &Value) {
+    let Some(teams) = value.get("teams").and_then(|t| t.as_array()).filter(|t| !t.is_empty())
+    else {
+        return;
+    };
+    let Some(players) = value.get("players").and_then(|p| p.as_array()) else {
+        return;
+    };
+    let winner = teams
+        .iter()
+        .find(|t| t.get("won").and_then(|w| w.as_bool()) == Some(true))
+        .and_then(|t| t.get("teamId").and_then(|id| id.as_str()));
+    for player in players {
+        let Some(subject) = player.get("subject").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        let Some(team) = player.get("teamId").and_then(|t| t.as_str()) else {
+            continue;
+        };
+        let result = match winner {
+            Some(w) if w == team => MatchResult::Win,
+            Some(_) => MatchResult::Loss,
+            None => MatchResult::Draw,
+        };
+        out.entry(subject.to_string()).or_default().result = Some(result);
     }
 }
 
@@ -216,7 +276,7 @@ mod tests {
 
     /// What one payload contributes to `subject`'s window, the way a caller folds it in.
     fn totals_for(value: &Value, subject: &str) -> MatchTotals {
-        match_contribution(value).get(subject).copied().unwrap_or_default()
+        match_contribution(value).get(subject).map(|p| p.totals).unwrap_or_default()
     }
 
     #[test]
@@ -256,6 +316,7 @@ mod tests {
         // recent match ids capped at RECENT_MATCHES_FOR_HS (5), newest first.
         assert_eq!(h.recent_match_ids, vec!["m1", "m2", "m3", "m4", "m5"]);
         assert_eq!(h.newest_match_id(), Some("m1"));
+        assert_eq!(h.result_match_ids, vec!["m1", "m2", "m3", "m4", "m5"]);
     }
 
     #[test]
@@ -385,10 +446,12 @@ mod tests {
         });
         let contribution = match_contribution(&payload);
         assert_eq!(contribution.len(), 2);
-        assert_eq!(contribution["a"].headshot_percent(), Some(50));
-        assert_eq!(contribution["a"].kd(), Some(1.33));
-        assert_eq!(contribution["b"].headshot_percent(), Some(0));
-        assert_eq!(contribution["b"].kd(), Some(0.5));
+        assert_eq!(contribution["a"].totals.headshot_percent(), Some(50));
+        assert_eq!(contribution["a"].totals.kd(), Some(1.33));
+        assert_eq!(contribution["b"].totals.headshot_percent(), Some(0));
+        assert_eq!(contribution["b"].totals.kd(), Some(0.5));
+        // No teams[] in this payload -> no outcome for anyone.
+        assert_eq!(contribution["a"].result, None);
         // A player who never appeared is simply absent.
         assert!(!contribution.contains_key("c"));
     }
@@ -434,8 +497,73 @@ mod tests {
         });
         let mut acc = MatchTotals::default();
         acc.add(totals_for(&payload, "me"));
-        let stats = acc.recent_stats();
+        let stats = acc.recent_stats(1);
         assert_eq!(stats.headshot_percent, Some(50));
         assert_eq!(stats.kd, Some(1.5));
+        assert_eq!(stats.matches, Some(1));
+    }
+
+    #[test]
+    fn a_window_without_figures_has_no_match_count() {
+        assert_eq!(MatchTotals::default().recent_stats(3), RecentStats::default());
+    }
+
+    /// A match-details payload carrying just the teams and each player's team id.
+    fn teams_payload(blue_won: bool, red_won: bool) -> Value {
+        json!({
+            "players": [
+                { "subject": "blue-player", "teamId": "Blue" },
+                { "subject": "red-player", "teamId": "Red" }
+            ],
+            "teams": [
+                { "teamId": "Blue", "won": blue_won, "roundsWon": 13 },
+                { "teamId": "Red", "won": red_won, "roundsWon": 7 }
+            ]
+        })
+    }
+
+    #[test]
+    fn the_winning_team_wins_and_the_other_loses() {
+        let contribution = match_contribution(&teams_payload(true, false));
+        assert_eq!(contribution["blue-player"].result, Some(MatchResult::Win));
+        assert_eq!(contribution["red-player"].result, Some(MatchResult::Loss));
+    }
+
+    #[test]
+    fn a_match_no_team_won_is_a_draw() {
+        let contribution = match_contribution(&teams_payload(false, false));
+        assert_eq!(contribution["blue-player"].result, Some(MatchResult::Draw));
+        assert_eq!(contribution["red-player"].result, Some(MatchResult::Draw));
+    }
+
+    #[test]
+    fn no_team_results_leave_the_outcome_unknown() {
+        let contribution = match_contribution(&json!({
+            "players": [ { "subject": "me", "teamId": "Blue" } ],
+            "teams": []
+        }));
+        assert!(!contribution.contains_key("me"));
+        let contribution = match_contribution(&json!({
+            "players": [ { "subject": "me" } ],
+            "teams": [ { "teamId": "Blue", "won": true } ]
+        }));
+        assert!(!contribution.contains_key("me"));
+    }
+
+    #[test]
+    fn real_outcomes_replace_rr_pips_and_the_rest_fall_back() {
+        let mut h = parse_competitive_updates(json!({ "Matches": [
+            { "MatchID": "m1", "RankedRatingEarned": 0 },
+            { "MatchID": "m2", "RankedRatingEarned": 18 },
+            { "MatchID": "m3", "RankedRatingEarned": -15 }
+        ]}));
+        assert_eq!(h.results, vec![MatchResult::Unknown, MatchResult::Win, MatchResult::Loss]);
+        h.apply_outcomes(|id| match id {
+            "m1" => Some(MatchResult::Draw),
+            "m2" => Some(MatchResult::Loss),
+            _ => None,
+        });
+        // m3 has no details, so its RR-inferred pip stands.
+        assert_eq!(h.results, vec![MatchResult::Draw, MatchResult::Loss, MatchResult::Loss]);
     }
 }

@@ -245,6 +245,8 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    native `title`. Then release v0.1.4.
    - Lesson: never ask an agent to make `cargo fmt --check` pass. The repo is not
      rustfmt-clean (roadmap). Git Bash `sed -i` also strips CRLF from `app_state.rs`.
+   - Live-verify: match-details `teams[].won` / `players[].teamId` come from the techchrism
+     schema. No capture confirms them yet; a missing field falls back to the RR pip.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,

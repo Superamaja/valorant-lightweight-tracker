@@ -220,6 +220,8 @@ interface PlayerRow {
   headshotPercent: number | null; // HS% over recent comp matches (0–100); null when "N/a"
   kd: number | null;            // kills/deaths over the same recent comp matches, 2 decimals;
                                 // null when those matches carry no stats for the player
+  statsMatches: number | null;  // matches HS%/KD were computed from (5 when full, fewer when
+                                // partial); null when both are null
   vandalSkin: SkinInfo | null;  // equipped Vandal skin; null in Pregame / Menus
   phantomSkin: SkinInfo | null; // equipped Phantom skin; null in Pregame / Menus
 }
@@ -229,7 +231,7 @@ interface PendingStats {       // true = still loading (skeleton); false = settl
   rank: boolean;                // `currentRank`, `rr`, `leaderboardRank`, `peakRank`,
                                 // `peakRankAct`, `winRate` — all one MMR payload
   history: boolean;             // `rrChange`, `recentResults`
-  recentStats: boolean;         // `headshotPercent`, `kd`
+  recentStats: boolean;         // `headshotPercent`, `kd`, `statsMatches`
   skins: boolean;               // `vandalSkin`, `phantomSkin` (Ingame only; settles for the
                                 // whole roster at once)
 }
@@ -239,7 +241,8 @@ interface WinRate {
   games: number;                // competitive games this season (the "(14)")
 }
 
-type MatchResult = "Win" | "Loss" | "Unknown"; // "Unknown" = 0-RR match (ambiguous sign)
+type MatchResult = "Win" | "Loss" | "Draw" | "Unknown"; // "Draw" only from match-details;
+                                                        // "Unknown" = 0-RR match without them
 
 interface SkinInfo {
   name: string;                 // "Neptune Vandal" ("" if unresolved)
@@ -329,10 +332,15 @@ interface RankInfo {
   `"{percent} ({games})"`, e.g. `"57 (14)"`.
 - **`rrChange`** is the newest competitive match's `RankedRatingEarned` (can be negative,
   zero, or positive). `null` when the player has no recent competitive matches.
-- **`recentResults`** is up to 5 recent competitive results, **newest first**, each derived
-  from `RankedRatingEarned` sign: `> 0 → "Win"`, `< 0 → "Loss"`, `= 0 → "Unknown"` (a 0-RR
-  match is genuinely ambiguous — draw / placement / AFK-adjusted; render it as a neutral pip,
-  not a loss). `[]` when the player has no recent competitive matches.
+- **`recentResults`** is up to 5 recent competitive results, **newest first**. They first
+  arrive (clearing `pending.history`) derived from `RankedRatingEarned` sign: `> 0 → "Win"`,
+  `< 0 → "Loss"`, `= 0 → "Unknown"` (a 0-RR match is ambiguous: draw / placement /
+  AFK-adjusted; render it as a neutral pip, not a loss). Once a match's details have been read
+  for HS%/KD, a later snapshot replaces its pip with the real outcome: the player's team won →
+  `"Win"`, the other team won → `"Loss"`, no team won → `"Draw"`. A match whose details are
+  unavailable keeps its RR-derived pip, so `"Draw"` only ever comes from details and a pip can
+  change value while `pending.history` is already `false`. `[]` when the player has no recent
+  competitive matches.
 - **`headshotPercent`** is an integer 0–100 computed over the last few competitive matches
   (`headshots / (headshots + bodyshots + legshots)`, matching vRY). `null` when the player
   has no recent matches (render "N/a"). When some of those matches cannot be fetched (the
@@ -347,6 +355,11 @@ interface RankInfo {
   their null cases are **not identical**: `headshotPercent` is also `null` when the window
   records zero shots, so a row can legitimately show `kd` with an "N/a" HS% — treat each
   field's null independently.
+- **`statsMatches`** is how many matches `headshotPercent`/`kd` were computed from: `5` (the
+  full window, exported as `STATS_WINDOW` in `src/ipc/types.ts`) normally, fewer when some of
+  the window's matches were unavailable, `null` whenever both figures are `null`. It settles
+  with them under `pending.recentStats`. Snapshots captured before the field existed lack it,
+  so treat a missing value like `null`.
 - **`vandalSkin` / `phantomSkin`** are populated only in `Ingame` (Riot exposes loadouts only
   once the match starts) — both are `null` in `Pregame` and `Menus`. A `SkinInfo` with an
   empty `name` means the skin uuid was not in the static-data cache (render the icon if

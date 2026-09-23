@@ -138,6 +138,7 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 recent_results,
                 headshot_percent: recent.headshot_percent,
                 kd: recent.kd,
+                stats_matches: recent.matches,
                 vandal_skin,
                 phantom_skin,
                 pending,
@@ -411,12 +412,15 @@ mod tests {
             RrHistory {
                 rr_change: Some(13),
                 results: vec![crate::riot::types::MatchResult::Win, crate::riot::types::MatchResult::Loss],
+                result_match_ids: vec!["m1".into(), "m2".into()],
                 recent_match_ids: vec!["m1".into()],
             },
         );
         let mut recent_stats = HashMap::new();
-        recent_stats
-            .insert("me".to_string(), RecentStats { headshot_percent: Some(25), kd: Some(1.28) });
+        recent_stats.insert(
+            "me".to_string(),
+            RecentStats { headshot_percent: Some(25), kd: Some(1.28), matches: Some(4) },
+        );
         let mut skins = HashMap::new();
         skins.insert(
             "me".to_string(),
@@ -433,6 +437,7 @@ mod tests {
         assert_eq!(me.recent_results.len(), 2);
         assert_eq!(me.headshot_percent, Some(25));
         assert_eq!(me.kd, Some(1.28));
+        assert_eq!(me.stats_matches, Some(4));
         // Skin id present but static data empty -> resolves to an (empty-name) SkinInfo.
         assert!(me.vandal_skin.is_some());
         assert!(me.phantom_skin.is_none());
@@ -448,6 +453,7 @@ mod tests {
         let me = row(&rows, "me");
         assert_eq!(me.headshot_percent, None);
         assert_eq!(me.kd, None);
+        assert_eq!(me.stats_matches, None);
     }
 
     #[test]

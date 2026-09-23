@@ -121,9 +121,10 @@ const BAR = "flex h-1.5 w-14 gap-px overflow-hidden rounded-full bg-base";
 const PIP_TONE: Record<MatchResult, string> = {
   Win: "bg-win",
   Loss: "bg-loss",
+  Draw: "bg-neutral-400",
   Unknown: "bg-neutral-600",
 };
-const PIP_LETTER: Record<MatchResult, string> = { Win: "W", Loss: "L", Unknown: "?" };
+const PIP_LETTER: Record<MatchResult, string> = { Win: "W", Loss: "L", Draw: "D", Unknown: "?" };
 const SLOTS = [0, 1, 2, 3, 4];
 
 /** Last five competitive results, newest first. Empty segments keep the column aligned. */

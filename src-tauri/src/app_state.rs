@@ -710,9 +710,9 @@ fn window_yield(
     if any_failed && (!last_attempt || arrived == 0) {
         WindowYield::Missing
     } else if any_failed || any_unprocessed {
-        WindowYield::Partial(totals.recent_stats())
+        WindowYield::Partial(totals.recent_stats(arrived))
     } else {
-        WindowYield::Full(totals.recent_stats())
+        WindowYield::Full(totals.recent_stats(arrived))
     }
 }
 
@@ -739,7 +739,15 @@ impl MatchDetailsCache {
     fn totals_for(&self, match_id: &str, puuid: &str) -> Option<MatchTotals> {
         self.map
             .get(match_id)
-            .map(|c| c.get(puuid).copied().unwrap_or_default())
+            .map(|c| c.get(puuid).map(|p| p.totals).unwrap_or_default())
+    }
+
+    /// Upgrade `puuid`'s pips to the real outcome of every match held here; the matches that
+    /// are not held keep their RR-inferred result.
+    fn upgrade_pips(&self, history: &mut RrHistory, puuid: &str) {
+        history.apply_outcomes(|match_id| {
+            self.map.get(match_id).and_then(|c| c.get(puuid)).and_then(|p| p.result)
+        });
     }
 
     fn put(&mut self, match_id: &str, contribution: MatchContribution) {
@@ -1971,6 +1979,9 @@ async fn fetch_phase2(
         // Session cache hit (same newest match) -> reuse, no match-details fetch.
         if let Some(stats) = recent_stats_cache.get(puuid, &newest) {
             vlt_log!("enrich", "stats cache hit for {}", crate::debug_log::short(puuid));
+            if let Some(history) = cache.updates.get_mut(puuid) {
+                match_details.upgrade_pips(history, puuid);
+            }
             cache.recent_stats.insert(puuid.clone(), stats);
             progress.publish_progress(cache, false);
             continue;
@@ -2005,7 +2016,7 @@ async fn fetch_phase2(
                 match result {
                     Ok(v) => {
                         let contribution = stats::match_contribution(&v);
-                        acc.add(contribution.get(puuid).copied().unwrap_or_default());
+                        acc.add(contribution.get(puuid).map(|p| p.totals).unwrap_or_default());
                         match_details.put(mid, contribution);
                         arrived += 1;
                     }
@@ -2020,6 +2031,9 @@ async fn fetch_phase2(
                     }
                 }
             }
+        }
+        if let Some(history) = cache.updates.get_mut(puuid) {
+            match_details.upgrade_pips(history, puuid);
         }
         // Only a full window is kept for the session: a partial one would otherwise stay
         // until the player's next competitive match. The matches that DID arrive stay in
@@ -2485,8 +2499,10 @@ mod tests {
         let mut cache = MatchDetailsCache::default();
         assert_eq!(cache.totals_for("m1", "a"), None);
 
-        let played =
-            |kills, deaths| MatchTotals { kills, deaths, kd_matches: 1, ..Default::default() };
+        let played = |kills, deaths| stats::PlayerMatch {
+            totals: MatchTotals { kills, deaths, kd_matches: 1, ..Default::default() },
+            result: None,
+        };
         let mut contribution = MatchContribution::new();
         contribution.insert("a".into(), played(20, 15));
         contribution.insert("b".into(), played(9, 18));
@@ -2497,6 +2513,29 @@ mod tests {
         assert_eq!(cache.totals_for("m1", "b").unwrap().kills, 9);
         // ...and a player who wasn't in it contributes nothing, which is still a hit.
         assert_eq!(cache.totals_for("m1", "c"), Some(MatchTotals::default()));
+    }
+
+    #[test]
+    fn pips_upgrade_to_the_real_outcome_once_the_details_arrive() {
+        use crate::riot::types::MatchResult::{Draw, Loss, Unknown, Win};
+        let mut history = stats::parse_competitive_updates(serde_json::json!({ "Matches": [
+            { "MatchID": "m1", "RankedRatingEarned": 0 },
+            { "MatchID": "m2", "RankedRatingEarned": 20 },
+            { "MatchID": "m3", "RankedRatingEarned": -18 }
+        ]}));
+        let mut cache = MatchDetailsCache::default();
+        let player = |result| stats::PlayerMatch { totals: MatchTotals::default(), result };
+
+        // Nothing downloaded yet: the pips stay as competitiveupdates painted them.
+        cache.upgrade_pips(&mut history, "a");
+        assert_eq!(history.results, vec![Unknown, Win, Loss]);
+
+        cache.put("m1", MatchContribution::from([("a".to_string(), player(Some(Draw)))]));
+        cache.put("m2", MatchContribution::from([("a".to_string(), player(Some(Loss)))]));
+        // Held, but without team results: the RR pip stands.
+        cache.put("m3", MatchContribution::from([("a".to_string(), player(None))]));
+        cache.upgrade_pips(&mut history, "a");
+        assert_eq!(history.results, vec![Draw, Loss, Loss]);
     }
 
     #[test]
@@ -2546,7 +2585,7 @@ mod tests {
         let mut cache = MatchDetailsCache::default();
         let mut contribution = MatchContribution::new();
         let played = MatchTotals { kills: 20, deaths: 15, kd_matches: 1, ..Default::default() };
-        contribution.insert("a".into(), played);
+        contribution.insert("a".into(), stats::PlayerMatch { totals: played, result: None });
         cache.put("m1", contribution);
         let mut failed = HashSet::new();
         failed.insert("m2".to_string());
@@ -2581,7 +2620,8 @@ mod tests {
         let ids = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let mut cache = MatchDetailsCache::default();
         for (id, totals) in [("m2", played(2, 8, 20, 10)), ("m3", played(3, 7, 10, 10))] {
-            cache.put(id, MatchContribution::from([("a".to_string(), totals)]));
+            let player = stats::PlayerMatch { totals, result: None };
+            cache.put(id, MatchContribution::from([("a".to_string(), player)]));
         }
         let mut unprocessed = HashSet::new();
         unprocessed.insert("m1".to_string());
@@ -2600,7 +2640,7 @@ mod tests {
 
         // ...so the figures come from the other two, on every attempt, and are not kept for
         // the session (the next lobby recomputes once the match is processed).
-        let expected = RecentStats { headshot_percent: Some(25), kd: Some(1.5) };
+        let expected = RecentStats { headshot_percent: Some(25), kd: Some(1.5), matches: Some(2) };
         for last_attempt in [false, true] {
             assert_eq!(
                 window_yield(&plan.cached, plan.arrived, false, true, last_attempt),
@@ -2617,7 +2657,11 @@ mod tests {
         // Budget spent: the matches that arrived are shown, but not kept for the session.
         assert_eq!(
             window_yield(&totals, 2, true, false, true),
-            WindowYield::Partial(RecentStats { headshot_percent: Some(25), kd: Some(2.0) })
+            WindowYield::Partial(RecentStats {
+                headshot_percent: Some(25),
+                kd: Some(2.0),
+                matches: Some(2)
+            })
         );
         // A failure alongside an unprocessed id settles the same way.
         assert_eq!(window_yield(&totals, 2, true, true, false), WindowYield::Missing);
@@ -2636,7 +2680,7 @@ mod tests {
     fn a_full_window_is_kept_for_the_session() {
         let totals = played(1, 3, 12, 6);
         let expected =
-            WindowYield::Full(RecentStats { headshot_percent: Some(25), kd: Some(2.0) });
+            WindowYield::Full(RecentStats { headshot_percent: Some(25), kd: Some(2.0), matches: Some(5) });
         assert_eq!(window_yield(&totals, 5, false, false, false), expected);
         assert_eq!(window_yield(&totals, 5, false, false, true), expected);
     }
@@ -2710,7 +2754,7 @@ mod tests {
         // Miss when empty.
         assert_eq!(cache.get("p", "m1"), None);
 
-        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28) };
+        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28), matches: Some(5) };
         cache.put("p", "m1", stats);
         // Hit only when the newest match id matches -> no re-download of match-details.
         // HS% and KD ride the same entry (they come from the same payloads).
@@ -2724,7 +2768,7 @@ mod tests {
     #[test]
     fn recent_stats_cache_evicts_the_oldest_player_past_its_cap() {
         let mut cache = RecentStatsCache::default();
-        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28) };
+        let stats = RecentStats { headshot_percent: Some(25), kd: Some(1.28), matches: Some(5) };
         for i in 0..RECENT_STATS_CACHE_CAP + 2 {
             cache.put(&format!("p{i}"), "m", stats);
         }
