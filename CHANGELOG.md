@@ -3,6 +3,19 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## v0.1.4 - 2026-09-23
+
+- Fixed headshot % and KD sometimes showing N/A for you (or others) when queuing
+  right after a match. They now use the matches that could be loaded instead of
+  giving up.
+- Improved the last 5 results: wins, losses and draws now come from the actual
+  match result instead of being guessed from RR changes, and draws have their
+  own color.
+- Added a hint when headshot % or KD is based on fewer than 5 matches: the number
+  is dimmed and hovering it tells you how many matches it covers.
+- Improved tooltips: hover text now appears in a cleaner in-app style instead of
+  the plain system tooltip.
+
 ## v0.1.3 - 2026-09-04
 
 - Added a "Copy diagnostics" link on the waiting screen and in the header during a match.

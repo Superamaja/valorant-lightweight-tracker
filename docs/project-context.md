@@ -242,7 +242,7 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    and partial windows never enter the session cache. In the same batch: real match
    outcomes plus `Draw` for the last-5 pips (read from match-details), a per-row
    matches-used count with dimmed HS%/KD when it is under 5, and custom tooltips replacing
-   native `title`. Then release v0.1.4.
+   native `title`. Released as v0.1.4 (2026-09-23).
    - Lesson: never ask an agent to make `cargo fmt --check` pass. The repo is not
      rustfmt-clean (roadmap). Git Bash `sed -i` also strips CRLF from `app_state.rs`.
    - Live-verify: match-details `teams[].won` / `players[].teamId` come from the techchrism
