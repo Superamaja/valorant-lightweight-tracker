@@ -1,5 +1,6 @@
 import type { RankInfo } from "../../ipc/types";
 import { Img, Skeleton } from "../primitives";
+import { Tooltip } from "../Tooltip";
 
 /** Current and peak rank share one icon size so the pair reads as equals. */
 const ICON = "h-8 w-8";
@@ -10,19 +11,20 @@ const ICON = "h-8 w-8";
  */
 function RankSkeleton({ size }: { size: string }) {
   return (
-    <div className="flex items-center gap-1.5" title="Loading rank">
-      <Skeleton className={`${size} shrink-0 rounded-full`} />
-      <Skeleton className="h-1.5 w-6 rounded-full" />
-    </div>
+    <Tooltip content="Loading rank">
+      <div className="flex items-center gap-1.5">
+        <Skeleton className={`${size} shrink-0 rounded-full`} />
+        <Skeleton className="h-1.5 w-6 rounded-full" />
+      </div>
+    </Tooltip>
   );
 }
 
-function RankIcon({ rank, size, title }: { rank: RankInfo; size: string; title: string }) {
+function RankIcon({ rank, size }: { rank: RankInfo; size: string }) {
   return (
     <Img
       src={rank.iconUrl}
       alt={rank.name}
-      title={title}
       className={`${size} shrink-0 object-contain`}
       fallback={<span className={`${size} shrink-0 rounded-full border border-dashed border-white/10`} />}
     />
@@ -50,20 +52,22 @@ export function RankCell({
 
   // Unranked has no rating to show, so the icon carries the cell on its own.
   return (
-    <div className="flex items-center gap-1.5" title={title}>
-      <RankIcon rank={rank} size={ICON} title={title} />
-      {ranked && (
-        <span className="flex flex-col leading-none">
-          <span className="text-[12px] tabular-nums text-neutral-200">
-            {rr}
-            <span className="text-[9px] text-neutral-500"> RR</span>
+    <Tooltip content={title}>
+      <div className="flex items-center gap-1.5">
+        <RankIcon rank={rank} size={ICON} />
+        {ranked && (
+          <span className="flex flex-col leading-none">
+            <span className="text-[12px] tabular-nums text-neutral-200">
+              {rr}
+              <span className="text-[9px] text-neutral-500"> RR</span>
+            </span>
+            {leaderboardRank > 0 && (
+              <span className="mt-0.5 text-[9px] tabular-nums text-accent">#{leaderboardRank}</span>
+            )}
           </span>
-          {leaderboardRank > 0 && (
-            <span className="mt-0.5 text-[9px] tabular-nums text-accent">#{leaderboardRank}</span>
-          )}
-        </span>
-      )}
-    </div>
+        )}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -81,9 +85,11 @@ export function PeakCell({
 
   const title = `Peak: ${rank.name}${act ? ` · ${act}` : ""}`;
   return (
-    <div className="flex items-center gap-1.5" title={title}>
-      <RankIcon rank={rank} size={ICON} title={title} />
-      {act && <span className="text-[9px] tracking-wide text-neutral-500">{act}</span>}
-    </div>
+    <Tooltip content={title}>
+      <div className="flex items-center gap-1.5">
+        <RankIcon rank={rank} size={ICON} />
+        {act && <span className="text-[9px] tracking-wide text-neutral-500">{act}</span>}
+      </div>
+    </Tooltip>
   );
 }

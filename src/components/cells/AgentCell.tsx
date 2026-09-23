@@ -1,5 +1,6 @@
 import { SELECTED, type AgentInfo } from "../../ipc/types";
 import { Img } from "../primitives";
+import { Tooltip } from "../Tooltip";
 
 /**
  * Agent portrait. In pregame it also carries the pick state: pulsing = still choosing.
@@ -30,30 +31,30 @@ export function AgentCell({
 
   return (
     <div className="relative h-10 w-10">
-      <div
-        title={label}
-        className={`h-full w-full overflow-hidden rounded-md bg-white/[0.03] ring-1 ring-white/10 ${
-          picking ? "animate-pulse" : ""
-        } ${hovered ? "opacity-60 saturate-50" : ""}`}
-      >
-        <Img
-          src={agent?.iconUrl ?? null}
-          alt={label}
-          className="h-full w-full object-cover"
-          fallback={
-            <span className="flex h-full w-full items-center justify-center text-[11px] text-neutral-700">
-              ?
-            </span>
-          }
-        />
-      </div>
-      {level !== null && level > 0 && (
-        <span
-          title={`Account level ${level}`}
-          className="absolute -right-1 -bottom-1 rounded-full bg-black/85 px-1 text-[10px] leading-[15px] font-medium tabular-nums text-neutral-300 ring-1 ring-white/15"
+      <Tooltip content={label}>
+        <div
+          className={`h-full w-full overflow-hidden rounded-md bg-white/[0.03] ring-1 ring-white/10 ${
+            picking ? "animate-pulse" : ""
+          } ${hovered ? "opacity-60 saturate-50" : ""}`}
         >
-          {level}
-        </span>
+          <Img
+            src={agent?.iconUrl ?? null}
+            alt={label}
+            className="h-full w-full object-cover"
+            fallback={
+              <span className="flex h-full w-full items-center justify-center text-[11px] text-neutral-700">
+                ?
+              </span>
+            }
+          />
+        </div>
+      </Tooltip>
+      {level !== null && level > 0 && (
+        <Tooltip content={`Account level ${level}`}>
+          <span className="absolute -right-1 -bottom-1 rounded-full bg-black/85 px-1 text-[10px] leading-[15px] font-medium tabular-nums text-neutral-300 ring-1 ring-white/15">
+            {level}
+          </span>
+        </Tooltip>
       )}
     </div>
   );

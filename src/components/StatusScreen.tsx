@@ -9,6 +9,7 @@ import {
   type UpdateCheck,
 } from "../lib/updater";
 import { GitHubIcon } from "./primitives";
+import { Tooltip } from "./Tooltip";
 
 export type Tone = "idle" | "live" | "error";
 
@@ -54,21 +55,20 @@ function UpdateCallToAction() {
     : `${installError ? "Retry update to" : "Update to"} v${result.version}`;
 
   return (
-    <button
-      type="button"
-      onClick={runUpdateInstall}
-      disabled={installing}
-      title={
-        installing
-          ? "Downloading the update"
-          : (installError ?? "Install it and restart")
-      }
-      className={`mt-5 rounded-full bg-accent px-5 py-2.5 text-[13px] font-medium text-white shadow-[0_0_24px_-4px] shadow-accent/50 transition-opacity hover:opacity-90 ${
-        installing ? "animate-pulse" : ""
-      }`}
+    <Tooltip
+      content={installing ? "Downloading the update" : (installError ?? "Install it and restart")}
     >
-      {label}
-    </button>
+      <button
+        type="button"
+        onClick={runUpdateInstall}
+        disabled={installing}
+        className={`mt-5 rounded-full bg-accent px-5 py-2.5 text-[13px] font-medium text-white shadow-[0_0_24px_-4px] shadow-accent/50 transition-opacity hover:opacity-90 ${
+          installing ? "animate-pulse" : ""
+        }`}
+      >
+        {label}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -89,17 +89,18 @@ function VersionLine() {
   const busy = checking || installing;
 
   return (
-    <button
-      type="button"
-      onClick={runUpdateCheck}
-      disabled={busy}
-      title={installError ?? "Check for updates"}
-      className={`text-[10px] tabular-nums text-neutral-600 transition-colors hover:text-neutral-300 ${
-        busy ? "animate-pulse" : ""
-      }`}
-    >
-      {shown ? resultText(shown) : `v${APP_VERSION}`}
-    </button>
+    <Tooltip content={installError ?? "Check for updates"}>
+      <button
+        type="button"
+        onClick={runUpdateCheck}
+        disabled={busy}
+        className={`text-[10px] tabular-nums text-neutral-600 transition-colors hover:text-neutral-300 ${
+          busy ? "animate-pulse" : ""
+        }`}
+      >
+        {shown ? resultText(shown) : `v${APP_VERSION}`}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -121,27 +122,29 @@ function StatusFooter({ screen, heldTable }: { screen: string; heldTable: boolea
       <div className="flex items-center gap-2 text-[10px] text-neutral-600">
         <VersionLine />
         <span aria-hidden="true">·</span>
-        <button
-          type="button"
-          onClick={() => void copy({ screen, heldTable })}
-          disabled={phase === "busy"}
-          title={COPY_TITLE}
-          className={`text-[10px] transition-colors ${
-            phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
-          } ${phase === "busy" ? "animate-pulse" : ""}`}
-        >
-          {label}
-        </button>
+        <Tooltip content={COPY_TITLE}>
+          <button
+            type="button"
+            onClick={() => void copy({ screen, heldTable })}
+            disabled={phase === "busy"}
+            className={`text-[10px] transition-colors ${
+              phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
+            } ${phase === "busy" ? "animate-pulse" : ""}`}
+          >
+            {label}
+          </button>
+        </Tooltip>
         <span aria-hidden="true">·</span>
-        <button
-          type="button"
-          onClick={() => void openBugReport()}
-          title={BUG_TITLE}
-          className="inline-flex items-center gap-1 text-[10px] text-neutral-600 transition-colors hover:text-neutral-300"
-        >
-          <GitHubIcon />
-          Report a bug
-        </button>
+        <Tooltip content={BUG_TITLE}>
+          <button
+            type="button"
+            onClick={() => void openBugReport()}
+            className="inline-flex items-center gap-1 text-[10px] text-neutral-600 transition-colors hover:text-neutral-300"
+          >
+            <GitHubIcon />
+            Report a bug
+          </button>
+        </Tooltip>
       </div>
       {fallback !== null && (
         // Out of flow, so the report appearing never moves the centred stack above it.

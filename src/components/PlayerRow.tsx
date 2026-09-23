@@ -5,17 +5,26 @@ import { AgentCell } from "./cells/AgentCell";
 import { NameCell } from "./cells/NameCell";
 import { PeakCell, RankCell } from "./cells/RankCell";
 import { SkinCell } from "./cells/SkinCell";
-import { HeadshotCell, KdCell, ResultPips, RrChangeCell, WinRateCell } from "./cells/StatCells";
+import {
+  HeadshotCell,
+  KdCell,
+  ResultPips,
+  RrChangeCell,
+  WinRateCell,
+  type StatsScope,
+} from "./cells/StatCells";
+import { Tooltip } from "./Tooltip";
 
 /** Same colour for everyone in a party. Solo players keep the column empty. */
 function PartyBar({ mark }: { mark: PartyMark | undefined }) {
   if (!mark) return <span />;
   return (
-    <span
-      className="mx-auto block h-6 w-0.5 rounded-full"
-      style={{ backgroundColor: mark.color }}
-      title={`Party of ${mark.size}`}
-    />
+    <Tooltip content={`Party of ${mark.size}`}>
+      <span
+        className="mx-auto block h-6 w-0.5 rounded-full"
+        style={{ backgroundColor: mark.color }}
+      />
+    </Tooltip>
   );
 }
 
@@ -31,6 +40,11 @@ export function PlayerRow({
 }) {
   const tint = TEAM_TINT[side];
   const pending = pendingOf(player);
+  // `??` because snapshots captured before `statsMatches` existed lack the field.
+  const scope: StatsScope = {
+    matches: player.statsMatches ?? null,
+    results: player.recentResults.length,
+  };
 
   return (
     <div
@@ -53,8 +67,12 @@ export function PlayerRow({
         pending={pending.rank}
       />
       <PeakCell rank={player.peakRank} act={player.peakRankAct} pending={pending.rank} />
-      <HeadshotCell percent={player.headshotPercent} pending={pending.recentStats} />
-      <KdCell kd={player.kd} pending={pending.recentStats} />
+      <HeadshotCell
+        percent={player.headshotPercent}
+        scope={scope}
+        pending={pending.recentStats}
+      />
+      <KdCell kd={player.kd} scope={scope} pending={pending.recentStats} />
       <WinRateCell winRate={player.winRate} pending={pending.rank} />
       <ResultPips results={player.recentResults} pending={pending.history} />
       <RrChangeCell change={player.rrChange} pending={pending.history} />

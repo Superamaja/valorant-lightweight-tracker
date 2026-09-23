@@ -32,6 +32,23 @@ data, with no visual tell. Delete or rename the file to go back to live — the 
 an underscore (`_debug-snapshot.json`, also gitignored) so it can be flipped back later. (Release builds are
 unaffected either way — the loader is compiled out.)
 
+### Preview fixture
+
+`docs/fixtures/preview-snapshot.json` is a hand-made Ingame lobby with fake names and ids (asset
+URLs only) covering the states that are hard to catch live: a draw pip, an unknown pip,
+empty pip slots, a partial HS%/KD window (4 of 5), a short one (3 of 3, and 1 of 1), full
+rows and N/A rows. It lives outside `public/` so it never ships in the exe. It loads through the same file as any other snapshot. Park the current
+one under the underscore name and copy the fixture in:
+
+```powershell
+Move-Item public\debug-snapshot.json public\_debug-snapshot.json
+Copy-Item docs\fixtures\preview-snapshot.json public\debug-snapshot.json
+pnpm dev
+```
+
+then open <http://localhost:1420/>. To go back, move `_debug-snapshot.json` back over
+`debug-snapshot.json` (or delete it for live data).
+
 ## 2. Capturing real snapshots from a live game
 
 ```powershell

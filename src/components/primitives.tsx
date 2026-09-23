@@ -3,8 +3,6 @@ import { useEffect, useState, type ReactNode } from "react";
 interface ImgProps {
   src: string | null;
   alt: string;
-  /** Tooltip; defaults to `alt` — this is how the spec's "names are tooltips" works. */
-  title?: string;
   className?: string;
   /** Rendered when there is no URL or the image fails to load. */
   fallback?: ReactNode;
@@ -22,7 +20,7 @@ interface Failure {
 }
 
 /** An image that degrades quietly: null URLs and 404s fall back instead of showing a break. */
-export function Img({ src, alt, title, className, fallback = null }: ImgProps) {
+export function Img({ src, alt, className, fallback = null }: ImgProps) {
   const [failure, setFailure] = useState<Failure | null>(null);
   // A changed URL starts over: the old failure no longer describes what is rendered.
   const current = failure?.src === src ? failure : null;
@@ -46,7 +44,6 @@ export function Img({ src, alt, title, className, fallback = null }: ImgProps) {
       key={count}
       src={src}
       alt={alt}
-      title={title ?? alt}
       className={className}
       draggable={false}
       onError={() =>

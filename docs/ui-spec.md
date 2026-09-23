@@ -71,8 +71,8 @@ Decisions taken while building, beyond the baseline above:
 - **Default and random skins are shown as the words "Default" / "Random".** valorant-api has
   no artwork for them — every one answers with the same 14.5 KB "no image" placeholder (a box
   with an X), at both the skin and the level-1 icon, so there is no image to prefer.
-- **Tooltips are native `title` attributes.** Zero JS, zero dependencies, and it is what
-  "rank names are tooltips only" needs.
+- ~~**Tooltips are native `title` attributes.**~~ Superseded by the custom tooltip below
+  (2026-09-23).
 - **Skeletons are per cell, driven by `PlayerRow.pending`.** Each cell shows a skeleton iff
   its group's flag is true, and renders "N/A" the moment the flag clears, so the table fills
   in a group at a time as the backend publishes its progress snapshots. Rank, peak, WR and the
@@ -204,6 +204,34 @@ Flagged against `docs/ipc-contract.md` (no guesses made, current behaviour noted
 - Every icon component carries a one-line comment above the SVG naming the set, the icon name, and the licence (e.g. `/** GitHub mark from Simple Icons (CC0 1.0), path copied verbatim. */`).
 - Icons live in `src/components/primitives.tsx` next to the existing ones, render with `currentColor`, `aria-hidden="true"`, and a size class; they inherit the text colour of their row.
 - The pre-existing hand-drawn glyphs in `primitives.tsx` (`CopyIcon`, `ArrowLeftIcon`, `CheckIcon`) predate this rule; replace them with sourced equivalents only when touching them for another reason.
+
+## Tooltips, draw pips, HS%/KD window (2026-09-23)
+
+- **One tooltip component, `src/components/Tooltip.tsx`**, replaces every native `title`.
+  It merges its hover/focus handlers onto its single child (no wrapper element, so grid and
+  flex cells keep their layout) and portals a `position: fixed` bubble to `<body>`, so no
+  overflow container clips it and nothing shifts. Placement: above the trigger when it fits,
+  else below (whichever side has more room if neither fits), then clamped sideways to an 8px
+  margin inside the window. Shows after 200 ms of hover, or at once on keyboard focus
+  (`:focus-visible` only, so a click does not pop it); hides instantly on leave, blur, scroll,
+  resize, pointer-down and Escape. `role="tooltip"`, and the trigger carries
+  `aria-describedby` while it is open. Look: `bg-edge`, `border-white/10`, `rounded-md`,
+  11px `text-neutral-200`, soft black shadow, `max-w-64`. String content keeps its `\n` line
+  breaks. Empty content renders the child untouched. `Img` no longer takes a `title`.
+- **Draw pip is `bg-amber-300/70`**: the conventional "tie" hue, muted to sit beside the
+  desaturated win green and loss red, and clearly apart from Unknown (`bg-neutral-600`) and
+  the empty slot (`bg-white/5`). The pip tooltip spells results out in words, newest first:
+  `Last 5, newest first` then `Win · Draw · Loss · Unknown · Win`.
+- **HS% and KD dim on a partial window**: when `statsMatches` is below `STATS_WINDOW` both
+  values drop from `text-neutral-300` to `text-neutral-500` (still plainly readable; N/A
+  stays `text-neutral-700`). Their tooltips name the stat, then the window:
+  - `statsMatches < recentResults.length`: "Based on 4 of the last 5 matches (details for
+    the rest aren't available yet)";
+  - else below `STATS_WINDOW`: "Based on the only 3 recent competitive matches" ("Based on
+    their only recent competitive match" for one);
+  - full: "Last 5 competitive matches".
+  A missing `statsMatches` (snapshots older than the field) reads as null: no dimming, full
+  wording. N/A cells are unchanged.
 
 ## Open items
 

@@ -2,6 +2,7 @@ import type { TrackerSnapshot } from "../ipc/types";
 import { partyGroups, splitTeams } from "../lib/players";
 import { gridTemplate, ROW_GRID, visibleColumns, type TableLayout } from "../lib/table";
 import { TeamBlock } from "./TeamBlock";
+import { Tooltip } from "./Tooltip";
 
 function Legend({ layout }: { layout: TableLayout }) {
   return (
@@ -10,13 +11,9 @@ function Legend({ layout }: { layout: TableLayout }) {
       className={`${ROW_GRID} border-l-transparent pb-1 text-[9px] font-medium tracking-[0.14em] text-neutral-600 uppercase`}
     >
       {visibleColumns(layout.withSkins).map((column) => (
-        <span
-          key={column.key}
-          title={column.hint}
-          className={column.left ? "" : "text-center"}
-        >
-          {column.label}
-        </span>
+        <Tooltip key={column.key} content={column.hint}>
+          <span className={column.left ? "" : "text-center"}>{column.label}</span>
+        </Tooltip>
       ))}
     </div>
   );

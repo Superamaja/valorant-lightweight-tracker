@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import type { MatchResult, WinRate } from "../../ipc/types";
+import { STATS_WINDOW, type MatchResult, type WinRate } from "../../ipc/types";
 import { signed } from "../../lib/format";
-import { HS_SCOPE } from "../../lib/table";
 import { Skeleton } from "../primitives";
+import { Tooltip } from "../Tooltip";
 
 /**
  * One compact stat. While its group is still in flight an absent value is a skeleton; once
@@ -17,6 +17,7 @@ function Stat({
 }: {
   missing: boolean;
   pending: boolean;
+  /** Tooltip; `\n` breaks a line. */
   title: string;
   className?: string;
   children?: ReactNode;
@@ -27,46 +28,81 @@ function Stat({
         <Skeleton className="h-1.5 w-7 rounded-full" />
       </span>
     ) : (
-      <span className="text-center text-[11px] text-neutral-700" title={title}>
-        N/A
-      </span>
+      <Tooltip content={title}>
+        <span className="text-center text-[11px] text-neutral-700">N/A</span>
+      </Tooltip>
     );
   }
   return (
-    <span className={`text-center text-[12px] ${className}`} title={title}>
-      {children}
-    </span>
+    <Tooltip content={title}>
+      <span className={`text-center text-[12px] ${className}`}>{children}</span>
+    </Tooltip>
   );
 }
 
-export function HeadshotCell({ percent, pending }: { percent: number | null; pending: boolean }) {
+/** The matches HS% and KD stand on, next to how many recent matches the player has. */
+export interface StatsScope {
+  /** `statsMatches`; null when unknown, which reads as a full window. */
+  matches: number | null;
+  results: number;
+}
+
+/** Fewer matches than a full window: still a real number, just a thinner one. */
+const isPartial = ({ matches }: StatsScope) => matches !== null && matches < STATS_WINDOW;
+
+const scopeTone = (scope: StatsScope) =>
+  `tabular-nums ${isPartial(scope) ? "text-neutral-500" : "text-neutral-300"}`;
+
+function scopeNote({ matches, results }: StatsScope): string {
+  if (matches === null || matches >= STATS_WINDOW) {
+    return `Last ${STATS_WINDOW} competitive matches`;
+  }
+  if (matches < results) {
+    return `Based on ${matches} of the last ${results} matches (details for the rest aren't available yet)`;
+  }
+  return matches === 1
+    ? "Based on their only recent competitive match"
+    : `Based on the only ${matches} recent competitive matches`;
+}
+
+export function HeadshotCell({
+  percent,
+  scope,
+  pending,
+}: {
+  percent: number | null;
+  scope: StatsScope;
+  pending: boolean;
+}) {
   return (
     <Stat
       missing={percent === null}
       pending={pending}
-      className="tabular-nums text-neutral-300"
-      title={
-        percent === null
-          ? "No recent competitive matches"
-          : `Headshot % over the ${HS_SCOPE}`
-      }
+      className={scopeTone(scope)}
+      title={percent === null ? "No recent competitive matches" : `Headshot %\n${scopeNote(scope)}`}
     >
       {percent}%
     </Stat>
   );
 }
 
-export function KdCell({ kd, pending }: { kd: number | null; pending: boolean }) {
+export function KdCell({
+  kd,
+  scope,
+  pending,
+}: {
+  kd: number | null;
+  scope: StatsScope;
+  pending: boolean;
+}) {
   // == also catches undefined from a pre-`kd` debug snapshot; a strict check would throw
   // on toFixed and blank the whole app.
   return (
     <Stat
       missing={kd == null}
       pending={pending}
-      className="tabular-nums text-neutral-300"
-      title={
-        kd == null ? "No recent competitive matches" : `Kills/deaths over the ${HS_SCOPE}`
-      }
+      className={scopeTone(scope)}
+      title={kd == null ? "No recent competitive matches" : `Kills/deaths\n${scopeNote(scope)}`}
     >
       {kd == null ? null : kd.toFixed(2)}
     </Stat>
@@ -121,10 +157,9 @@ const BAR = "flex h-1.5 w-14 gap-px overflow-hidden rounded-full bg-base";
 const PIP_TONE: Record<MatchResult, string> = {
   Win: "bg-win",
   Loss: "bg-loss",
-  Draw: "bg-neutral-400",
+  Draw: "bg-amber-300/70",
   Unknown: "bg-neutral-600",
 };
-const PIP_LETTER: Record<MatchResult, string> = { Win: "W", Loss: "L", Draw: "D", Unknown: "?" };
 const SLOTS = [0, 1, 2, 3, 4];
 
 /** Last five competitive results, newest first. Empty segments keep the column aligned. */
@@ -134,7 +169,7 @@ export function ResultPips({ results, pending }: { results: MatchResult[]; pendi
     ? pending
       ? "Loading recent matches"
       : "No recent competitive matches"
-    : `Last ${results.length}, newest first: ${results.map((r) => PIP_LETTER[r]).join(" ")}`;
+    : `Last ${results.length}, newest first\n${results.join(" · ")}`;
 
   if (empty && pending) {
     return (
@@ -145,18 +180,20 @@ export function ResultPips({ results, pending }: { results: MatchResult[]; pendi
   }
 
   return (
-    <span className="flex justify-center" title={title}>
-      <span className={BAR}>
-        {SLOTS.map((slot) => {
-          const result = results[slot];
-          return (
-            <span
-              key={slot}
-              className={`flex-1 ${result ? PIP_TONE[result] : "bg-white/5"}`}
-            />
-          );
-        })}
+    <Tooltip content={title}>
+      <span className="flex justify-center">
+        <span className={BAR}>
+          {SLOTS.map((slot) => {
+            const result = results[slot];
+            return (
+              <span
+                key={slot}
+                className={`flex-1 ${result ? PIP_TONE[result] : "bg-white/5"}`}
+              />
+            );
+          })}
+        </span>
       </span>
-    </span>
+    </Tooltip>
   );
 }

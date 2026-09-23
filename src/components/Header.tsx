@@ -9,6 +9,7 @@ import type { AppStatus, TrackerSnapshot } from "../ipc/types";
 import { clockTime, relativeTime } from "../lib/format";
 import { runUpdateCheck, runUpdateInstall } from "../lib/updater";
 import { ArrowLeftIcon, Img } from "./primitives";
+import { Tooltip } from "./Tooltip";
 
 /** The chip doubles as the health indicator: a lit dot means the client is connected. */
 const CHIP: Record<AppStatus, { label: string; dot: string; pulse: boolean }> = {
@@ -41,12 +42,9 @@ function LastUpdated({ at, held }: { at: number; held: boolean }) {
   if (!held && Date.now() - at < STALE_MS) return null;
 
   return (
-    <span
-      className="text-[10px] tabular-nums text-neutral-600"
-      title={`Last update ${clockTime(at)}`}
-    >
-      {relativeTime(at)}
-    </span>
+    <Tooltip content={`Last update ${clockTime(at)}`}>
+      <span className="text-[10px] tabular-nums text-neutral-600">{relativeTime(at)}</span>
+    </Tooltip>
   );
 }
 
@@ -65,22 +63,21 @@ function UpdateBadge() {
     : `${installError ? "Retry" : "Update"}: v${result.version}`;
 
   return (
-    <button
-      type="button"
-      onClick={runUpdateInstall}
-      disabled={installing}
-      title={
-        installing
-          ? "Downloading the update"
-          : (installError ?? "Install it and restart")
-      }
-      className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[10px] tabular-nums text-accent/80 transition-colors hover:bg-accent/20 hover:text-accent"
+    <Tooltip
+      content={installing ? "Downloading the update" : (installError ?? "Install it and restart")}
     >
-      <span
-        className={`h-1.5 w-1.5 rounded-full bg-accent ${installing ? "animate-pulse" : ""}`}
-      />
-      {label}
-    </button>
+      <button
+        type="button"
+        onClick={runUpdateInstall}
+        disabled={installing}
+        className="flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[10px] tabular-nums text-accent/80 transition-colors hover:bg-accent/20 hover:text-accent"
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full bg-accent ${installing ? "animate-pulse" : ""}`}
+        />
+        {label}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -93,17 +90,18 @@ function DiagnosticsItem({ screen, heldTable }: { screen: string; heldTable: boo
   const { phase, label, copy } = useCopyDiagnostics();
 
   return (
-    <button
-      type="button"
-      onClick={() => void copy({ screen, heldTable })}
-      disabled={phase === "busy"}
-      title={phase === "failed" ? COPY_FAILED_TITLE : COPY_TITLE}
-      className={`text-[10px] transition-colors ${
-        phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
-      } ${phase === "busy" ? "animate-pulse" : ""}`}
-    >
-      {label}
-    </button>
+    <Tooltip content={phase === "failed" ? COPY_FAILED_TITLE : COPY_TITLE}>
+      <button
+        type="button"
+        onClick={() => void copy({ screen, heldTable })}
+        disabled={phase === "busy"}
+        className={`text-[10px] transition-colors ${
+          phase === "copied" ? "text-win" : "text-neutral-600 hover:text-neutral-300"
+        } ${phase === "busy" ? "animate-pulse" : ""}`}
+      >
+        {label}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -150,14 +148,16 @@ export function Header({
 
       <div className="relative flex items-center gap-3 px-4 py-2.5">
         {map && (
-          <div className="h-9 w-14 shrink-0 overflow-hidden rounded-sm ring-1 ring-white/10">
-            <Img
-              src={map.listViewUrl}
-              alt={map.name}
-              className="h-full w-full object-cover"
-              fallback={<span className="block h-full w-full bg-white/5" />}
-            />
-          </div>
+          <Tooltip content={map.name}>
+            <div className="h-9 w-14 shrink-0 overflow-hidden rounded-sm ring-1 ring-white/10">
+              <Img
+                src={map.listViewUrl}
+                alt={map.name}
+                className="h-full w-full object-cover"
+                fallback={<span className="block h-full w-full bg-white/5" />}
+              />
+            </div>
+          </Tooltip>
         )}
 
         <div className="min-w-0">

@@ -1,6 +1,7 @@
 import type { SkinInfo } from "../../ipc/types";
 import { SKIN_ART_WIDTH } from "../../lib/table";
 import { Img, Skeleton } from "../primitives";
+import { Tooltip } from "../Tooltip";
 
 const CELL = "flex h-6 items-center justify-center";
 
@@ -27,9 +28,9 @@ export function SkinCell({
         {pending ? (
           <Skeleton className="h-1.5 w-14 rounded-full" />
         ) : (
-          <span className="text-[11px] text-neutral-700" title={`No ${weapon} equipped`}>
-            —
-          </span>
+          <Tooltip content={`No ${weapon} equipped`}>
+            <span className="text-[11px] text-neutral-700">—</span>
+          </Tooltip>
         )}
       </div>
     );
@@ -40,22 +41,26 @@ export function SkinCell({
 
   if (artless) {
     return (
-      <div className={CELL} title={label}>
-        <span className="text-[10px] text-neutral-600">{ARTLESS_LABEL[artless[1]]}</span>
-      </div>
+      <Tooltip content={label}>
+        <div className={CELL}>
+          <span className="text-[10px] text-neutral-600">{ARTLESS_LABEL[artless[1]]}</span>
+        </div>
+      </Tooltip>
     );
   }
 
   return (
-    <div className={CELL} title={label}>
-      <Img
-        src={skin.iconUrl}
-        alt={label}
-        className={`max-h-6 w-full ${SKIN_ART_WIDTH} object-contain`}
-        fallback={
-          <span className="w-full truncate text-center text-[10px] text-neutral-500">{label}</span>
-        }
-      />
-    </div>
+    <Tooltip content={label}>
+      <div className={CELL}>
+        <Img
+          src={skin.iconUrl}
+          alt={label}
+          className={`max-h-6 w-full ${SKIN_ART_WIDTH} object-contain`}
+          fallback={
+            <span className="w-full truncate text-center text-[10px] text-neutral-500">{label}</span>
+          }
+        />
+      </div>
+    </Tooltip>
   );
 }
