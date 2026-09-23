@@ -47,7 +47,7 @@ export function RankCell({
 
   const ranked = rank.tier > 0;
   const title = ranked
-    ? `${rank.name} · ${rr} RR${leaderboardRank > 0 ? ` · leaderboard #${leaderboardRank}` : ""}`
+    ? `${rank.name} · ${rr} RR${leaderboardRank > 0 ? ` · Leaderboard #${leaderboardRank}` : ""}`
     : rank.name;
 
   // Unranked has no rating to show, so the icon carries the cell on its own.
