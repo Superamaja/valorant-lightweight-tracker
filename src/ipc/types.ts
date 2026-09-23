@@ -11,7 +11,10 @@ export type AppStatus = "ValorantNotRunning" | "Menus" | "Pregame" | "Ingame";
  */
 export type MatchResult = "Win" | "Loss" | "Draw" | "Unknown";
 
-/** Matches in a full HS%/KD window. `statsMatches` below this means a partial window. */
+/**
+ * Matches in a full HS%/KD window. `statsMatches` below this means a partial window. Mirrors
+ * the backend's `RECENT_MATCHES_FOR_HS` (`src-tauri/src/riot/constants.rs`); keep the two in step.
+ */
 export const STATS_WINDOW = 5;
 
 /** Pregame agent-pick state. Riot's raw string, known values "locked" | "selected". */

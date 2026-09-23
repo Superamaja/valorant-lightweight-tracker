@@ -1,3 +1,4 @@
+import { STATS_WINDOW } from "../ipc/types";
 import type { PartyMark } from "./players";
 
 /**
@@ -16,12 +17,7 @@ export interface Column {
   hint?: string;
 }
 
-/**
- * How many recent competitive matches HS% is computed over. Mirrors the backend's
- * `RECENT_MATCHES_FOR_HS` (`src-tauri/src/riot/constants.rs`) — keep the two in step.
- */
-export const HS_MATCH_WINDOW = 5;
-export const HS_SCOPE = `last ${HS_MATCH_WINDOW} competitive matches`;
+export const HS_SCOPE = `last ${STATS_WINDOW} competitive matches`;
 
 /**
  * Every track except the two icon columns is `minmax(floor, Nfr)`, so spare width spreads
