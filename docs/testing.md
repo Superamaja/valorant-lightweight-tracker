@@ -46,6 +46,13 @@ Copy-Item docs\fixtures\preview-snapshot.json public\debug-snapshot.json
 pnpm dev
 ```
 
+### Real capture fixture
+
+`docs/fixtures/ingame-snapshot.json` is a real 10-player enriched Ingame capture, committed
+so a fresh clone on another machine has live-shaped data to test against. It holds real
+Riot IDs from that lobby (kept deliberately). Load it the same way as the preview fixture,
+copying it to `public/debug-snapshot.json`.
+
 then open <http://localhost:1420/>. To go back, move `_debug-snapshot.json` back over
 `debug-snapshot.json` (or delete it for live data).
 

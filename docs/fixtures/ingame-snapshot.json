@@ -1,0 +1,526 @@
+{
+  "status": "Ingame",
+  "map": {
+    "id": "/Game/Maps/Rook/Rook",
+    "name": "Corrode",
+    "splashUrl": "https://media.valorant-api.com/maps/1c18ab1f-420d-0d8b-71d0-77ad3c439115/splash.png",
+    "listViewUrl": "https://media.valorant-api.com/maps/1c18ab1f-420d-0d8b-71d0-77ad3c439115/listviewicon.png"
+  },
+  "mode": "Competitive",
+  "ownTeam": "Blue",
+  "players": [
+    {
+      "id": "fd61d7db-55ef-598e-9e60-d6f9e9831ec7",
+      "name": "Superamaja#F22",
+      "incognito": false,
+      "team": "Blue",
+      "isAlly": true,
+      "isSelf": true,
+      "agent": {
+        "id": "add6443a-41bd-e414-f6ad-e58d267f4e95",
+        "name": "Jett",
+        "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 21,
+        "name": "Ascendant 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/21/largeicon.png"
+      },
+      "rr": 49,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 22,
+        "name": "Ascendant 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/22/largeicon.png"
+      },
+      "peakRankAct": "E6: A3",
+      "accountLevel": 187,
+      "partyId": null,
+      "winRate": {
+        "percent": 60,
+        "games": 15
+      },
+      "rrChange": 13,
+      "recentResults": [
+        "Win",
+        "Win",
+        "Win",
+        "Win",
+        "Loss"
+      ],
+      "headshotPercent": 28,
+      "kd": 1.62,
+      "vandalSkin": {
+        "name": "Aeris Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/5dae3d09-47e4-1646-268d-99b9a25fabcd/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Prime//2.0 Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/742816a7-4449-044a-b3a3-06940f38ff6a/fullrender.png"
+      }
+    },
+    {
+      "id": "92e53906-1bc5-5ac6-a694-8064285bf659",
+      "name": "DropZ10#9197",
+      "incognito": false,
+      "team": "Blue",
+      "isAlly": true,
+      "isSelf": false,
+      "agent": {
+        "id": "0e38b510-41a8-5780-5e8f-568b2a4f2d6c",
+        "name": "Iso",
+        "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 23,
+        "name": "Ascendant 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/23/largeicon.png"
+      },
+      "rr": 40,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 24,
+        "name": "Immortal 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/24/largeicon.png"
+      },
+      "peakRankAct": "V25: A3",
+      "accountLevel": null,
+      "partyId": null,
+      "winRate": {
+        "percent": 54,
+        "games": 19
+      },
+      "rrChange": 9,
+      "recentResults": [
+        "Win",
+        "Win",
+        "Loss",
+        "Win",
+        "Loss"
+      ],
+      "headshotPercent": 26,
+      "kd": 1.11,
+      "vandalSkin": {
+        "name": "Prime Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/cd3ebdc1-4858-efda-6cee-c683726f8ca9/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Ion Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/b9c9eb56-4cbd-04b7-06a8-329dc6f1e73a/fullrender.png"
+      }
+    },
+    {
+      "id": "0aaac1f6-730d-53bf-8bcd-af0b173d3684",
+      "name": "itsybitsyissa#9718",
+      "incognito": false,
+      "team": "Blue",
+      "isAlly": true,
+      "isSelf": false,
+      "agent": {
+        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
+        "name": "Phoenix",
+        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 24,
+        "name": "Immortal 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/24/largeicon.png"
+      },
+      "rr": 62,
+      "leaderboardRank": 2254,
+      "peakRank": {
+        "tier": 25,
+        "name": "Immortal 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/25/largeicon.png"
+      },
+      "peakRankAct": "V26: A1",
+      "accountLevel": 245,
+      "partyId": null,
+      "winRate": {
+        "percent": 45,
+        "games": 14
+      },
+      "rrChange": -27,
+      "recentResults": [
+        "Loss",
+        "Win",
+        "Loss",
+        "Win",
+        "Loss"
+      ],
+      "headshotPercent": 19,
+      "kd": 0.97,
+      "vandalSkin": {
+        "name": "Glitchpop Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/16e8a438-4761-1887-3792-7bab966a7483/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Singularity Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/a99ac58b-41b0-e1cd-89fd-f3ad171410df/fullrender.png"
+      }
+    },
+    {
+      "id": "bce847d9-f3d6-51ae-8d58-a31d222a73a3",
+      "name": "zerkkoo#5138",
+      "incognito": false,
+      "team": "Blue",
+      "isAlly": true,
+      "isSelf": false,
+      "agent": {
+        "id": "8e253930-4c05-31dd-1b6c-968525494517",
+        "name": "Omen",
+        "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 22,
+        "name": "Ascendant 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/22/largeicon.png"
+      },
+      "rr": 71,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 23,
+        "name": "Ascendant 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/23/largeicon.png"
+      },
+      "peakRankAct": "E9: A2",
+      "accountLevel": null,
+      "partyId": null,
+      "winRate": {
+        "percent": 57,
+        "games": 22
+      },
+      "rrChange": 11,
+      "recentResults": [
+        "Win",
+        "Win",
+        "Loss",
+        "Win",
+        "Win"
+      ],
+      "headshotPercent": 30,
+      "kd": 1.18,
+      "vandalSkin": {
+        "name": "Reaver Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/b2a065c0-4632-ccaa-f496-7681dc2a6185/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Spectrum Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/e924a97d-46aa-3c3e-ec39-9abfeb811f2b/fullrender.png"
+      }
+    },
+    {
+      "id": "2f68a203-35e0-57c9-b2ba-624594bf6bc9",
+      "name": null,
+      "incognito": true,
+      "team": "Blue",
+      "isAlly": true,
+      "isSelf": false,
+      "agent": {
+        "id": "f94c3b30-42be-e959-889c-5aa313dba261",
+        "name": "Raze",
+        "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 21,
+        "name": "Ascendant 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/21/largeicon.png"
+      },
+      "rr": 28,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 22,
+        "name": "Ascendant 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/22/largeicon.png"
+      },
+      "peakRankAct": "V25: A1",
+      "accountLevel": null,
+      "partyId": null,
+      "winRate": {
+        "percent": 44,
+        "games": 13
+      },
+      "rrChange": -11,
+      "recentResults": [
+        "Loss",
+        "Loss",
+        "Loss",
+        "Loss",
+        "Unknown"
+      ],
+      "headshotPercent": 24,
+      "kd": 0.98,
+      "vandalSkin": {
+        "name": "Aeris Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskins/b494ddd1-4459-6976-6736-00a563a74376/displayicon.png"
+      },
+      "phantomSkin": {
+        "name": "Blackspyre Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/0a37f50e-40f8-cd35-5cfd-ab93d0656a14/fullrender.png"
+      }
+    },
+    {
+      "id": "50ecaa04-1f9b-5e47-a7ee-fc5dadc43ac7",
+      "name": "nacho3lg#444",
+      "incognito": false,
+      "team": "Red",
+      "isAlly": false,
+      "isSelf": false,
+      "agent": {
+        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
+        "name": "Phoenix",
+        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 25,
+        "name": "Immortal 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/25/largeicon.png"
+      },
+      "rr": 168,
+      "leaderboardRank": 587,
+      "peakRank": {
+        "tier": 25,
+        "name": "Immortal 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/25/largeicon.png"
+      },
+      "peakRankAct": "V26: A2",
+      "accountLevel": 318,
+      "partyId": null,
+      "winRate": {
+        "percent": 49,
+        "games": 16
+      },
+      "rrChange": 6,
+      "recentResults": [
+        "Win",
+        "Loss",
+        "Win",
+        "Loss",
+        "Win"
+      ],
+      "headshotPercent": 22,
+      "kd": 1.02,
+      "vandalSkin": {
+        "name": "Origin Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskins/6c4315b8-4ff1-baaa-5aac-5790c7443353/displayicon.png"
+      },
+      "phantomSkin": {
+        "name": "Singularity Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/36d14ec2-4376-a355-ad98-bdbc9b4b9e9a/fullrender.png"
+      }
+    },
+    {
+      "id": "0a04702e-d4e4-5ab8-acd6-838f18185693",
+      "name": "NotADinosaur#2331",
+      "incognito": false,
+      "team": "Red",
+      "isAlly": false,
+      "isSelf": false,
+      "agent": {
+        "id": "e370fa57-4757-3604-3648-499e1f642d3f",
+        "name": "Gekko",
+        "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 23,
+        "name": "Ascendant 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/23/largeicon.png"
+      },
+      "rr": 88,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 24,
+        "name": "Immortal 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/24/largeicon.png"
+      },
+      "peakRankAct": "E7: A3",
+      "accountLevel": 265,
+      "partyId": null,
+      "winRate": {
+        "percent": 53,
+        "games": 25
+      },
+      "rrChange": 8,
+      "recentResults": [
+        "Win",
+        "Win",
+        "Loss",
+        "Loss",
+        "Win"
+      ],
+      "headshotPercent": 27,
+      "kd": 1.15,
+      "vandalSkin": {
+        "name": "Oni Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/95bae138-42c7-7ba8-bf72-c58e546cb96a/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Oni Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/6096a66f-43d2-d4ad-6421-84aee3386921/fullrender.png"
+      }
+    },
+    {
+      "id": "9a09e787-a25c-5df9-89b1-e73537282aaa",
+      "name": "starringaryan#ary",
+      "incognito": false,
+      "team": "Red",
+      "isAlly": false,
+      "isSelf": false,
+      "agent": {
+        "id": "b444168c-4e35-8076-db47-ef9bf368f384",
+        "name": "Tejo",
+        "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 24,
+        "name": "Immortal 1",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/24/largeicon.png"
+      },
+      "rr": 54,
+      "leaderboardRank": 2506,
+      "peakRank": {
+        "tier": 26,
+        "name": "Immortal 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/26/largeicon.png"
+      },
+      "peakRankAct": "E9: A3",
+      "accountLevel": 222,
+      "partyId": null,
+      "winRate": {
+        "percent": 47,
+        "games": 12
+      },
+      "rrChange": -19,
+      "recentResults": [
+        "Loss",
+        "Loss",
+        "Win",
+        "Loss",
+        "Win"
+      ],
+      "headshotPercent": 21,
+      "kd": 0.93,
+      "vandalSkin": {
+        "name": "Divergence Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskins/5a510a45-4b2a-2b9a-bd78-1ea6d229ba38/displayicon.png"
+      },
+      "phantomSkin": {
+        "name": "Doom Wing Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/53aa1831-47fd-67e0-8a0a-b3aaf418603f/fullrender.png"
+      }
+    },
+    {
+      "id": "4d485bfb-a11d-507c-bbbf-9db950cd44f5",
+      "name": "Twinkle Toze#3520",
+      "incognito": false,
+      "team": "Red",
+      "isAlly": false,
+      "isSelf": false,
+      "agent": {
+        "id": "a3bfb853-43b2-7238-a4f1-ad90e9e46bcc",
+        "name": "Reyna",
+        "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 22,
+        "name": "Ascendant 2",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/22/largeicon.png"
+      },
+      "rr": 60,
+      "leaderboardRank": 0,
+      "peakRank": {
+        "tier": 23,
+        "name": "Ascendant 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/23/largeicon.png"
+      },
+      "peakRankAct": "V25: A2",
+      "accountLevel": 142,
+      "partyId": null,
+      "winRate": {
+        "percent": 44,
+        "games": 10
+      },
+      "rrChange": -17,
+      "recentResults": [
+        "Loss",
+        "Win",
+        "Loss",
+        "Win",
+        "Loss"
+      ],
+      "headshotPercent": 17,
+      "kd": 0.95,
+      "vandalSkin": {
+        "name": "Sentinels of Light Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/31c816c4-4e19-9a57-4103-4194723eb6f1/fullrender.png"
+      },
+      "phantomSkin": {
+        "name": "Ayakashi Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/ade1fd1b-4e09-303b-f14b-f4be212b0cbc/fullrender.png"
+      }
+    },
+    {
+      "id": "4b1cfdc4-d849-58be-8c10-72cb1603e8ab",
+      "name": "wrath#GLHF",
+      "incognito": false,
+      "team": "Red",
+      "isAlly": false,
+      "isSelf": false,
+      "agent": {
+        "id": "add6443a-41bd-e414-f6ad-e58d267f4e95",
+        "name": "Jett",
+        "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png"
+      },
+      "agentSelectionState": null,
+      "currentRank": {
+        "tier": 26,
+        "name": "Immortal 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/26/largeicon.png"
+      },
+      "rr": 294,
+      "leaderboardRank": 212,
+      "peakRank": {
+        "tier": 26,
+        "name": "Immortal 3",
+        "iconUrl": "https://media.valorant-api.com/competitivetiers/03621f52-342b-cf4e-4f86-9350a49c6d04/26/largeicon.png"
+      },
+      "peakRankAct": "V24: A3",
+      "accountLevel": 312,
+      "partyId": null,
+      "winRate": {
+        "percent": 50,
+        "games": 8
+      },
+      "rrChange": -14,
+      "recentResults": [
+        "Loss",
+        "Loss",
+        "Win",
+        "Win",
+        "Win"
+      ],
+      "headshotPercent": 35,
+      "kd": 1.26,
+      "vandalSkin": {
+        "name": "Aeris Vandal",
+        "iconUrl": "https://media.valorant-api.com/weaponskins/b494ddd1-4459-6976-6736-00a563a74376/displayicon.png"
+      },
+      "phantomSkin": {
+        "name": "Prelude to Chaos Phantom",
+        "iconUrl": "https://media.valorant-api.com/weaponskinchromas/d37e4796-4b3a-7555-6a5c-c4aa993fee82/fullrender.png"
+      }
+    }
+  ],
+  "enriched": true,
+  "lastUpdated": 1787618247682,
+  "message": null
+}
