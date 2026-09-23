@@ -262,6 +262,11 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      mapping (needs such an account), flat presence shape, the two-lane fetch + presence
      grace in a live match (both new this session), and the release-shaped CSP smoke test
      (`--debug` exe, Ctrl+Shift+I in a match).
+   - **Match-result fields (v0.1.4, user to do in a later session):** confirm that real
+     match-details payloads carry `teams[].won` and `players[].teamId` (see 11h). With a
+     debug build, capture one match-details payload, or play until you get a 0 RR game and
+     check that its pip shows the real Win/Loss/Draw instead of Unknown. If the fields are
+     absent, every pip silently falls back to the RR guess.
    - Possible polish noted from the first real-data screenshot: quiet the "Default"/"Default"
      skin text pairs; heavy N/A texture on no-comp-history rows.
 
