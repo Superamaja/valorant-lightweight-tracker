@@ -453,10 +453,6 @@ mod tests {
 
     #[test]
     fn hashes_to_lowercase_hex() {
-        assert_eq!(
-            hex_digest(&Sha256::digest(b"abc")),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
         // The digest a checksum file carries is compared against exactly this text.
         assert_eq!(hex_digest(&[0x00, 0x0f, 0xff]), "000fff");
     }

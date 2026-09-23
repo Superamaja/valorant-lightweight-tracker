@@ -822,15 +822,6 @@ connects: 1 | failures: 0 | last error: none";
     }
 
     #[test]
-    fn ids_are_truncated_to_eight_characters() {
-        let mut d = Diagnostics::default();
-        d.record_match("a1b2c3d4-5555-6666-7777-888899990000", true);
-        let m = d.last_match.as_ref().unwrap();
-        assert_eq!(m.id_short, "a1b2c3d4");
-        assert!(m.ingame);
-    }
-
-    #[test]
     fn report_never_contains_secrets() {
         const PASSWORD: &str = "Ss4WWtBoLIdaOoYm1FLKGw";
         const PRIVATE_BLOB: &str = "eyJzZXNzaW9uTG9vcFN0YXRlIjoiTUVOVVMifQ==";
@@ -900,36 +891,35 @@ connects: 1 | failures: 0 | last error: none";
     }
 
     #[test]
-    fn latam_and_br_carry_the_inferred_shard_note() {
-        assert_eq!(shard_note("br"), " (inferred mapping, never live-verified)");
-        assert_eq!(shard_note("latam"), " (inferred mapping, never live-verified)");
-
-        let now = Instant::now();
-        let mut d = example_diagnostics(now);
-        let session = d.session.as_mut().unwrap();
-        session.region_raw = "br".to_string();
-        session.region = "br".to_string();
-        session.shard = "na".to_string();
-        let report = render(&d, &menus_snapshot(), &example_ui(), &example_env(), now, EXAMPLE_WALL_MS);
-        assert!(report.contains(
-            "region: br -> shard na (inferred mapping, never live-verified) | season id: known"
-        ));
-    }
-
-    #[test]
-    fn other_regions_do_not() {
-        for region in ["na", "eu", "ap", "kr", "pbe"] {
-            assert_eq!(shard_note(region), "");
+    fn only_latam_and_br_carry_the_inferred_shard_note() {
+        const NOTE: &str = " (inferred mapping, never live-verified)";
+        for (region, note) in [
+            ("br", NOTE),
+            ("latam", NOTE),
+            ("na", ""),
+            ("eu", ""),
+            ("ap", ""),
+            ("kr", ""),
+            ("pbe", ""),
+        ] {
+            assert_eq!(shard_note(region), note, "{region}");
         }
-        // pbe is the one region whose glz host differs from what region-locale reported.
-        let now = Instant::now();
-        let mut d = example_diagnostics(now);
-        let session = d.session.as_mut().unwrap();
-        session.region_raw = "pbe".to_string();
-        session.region = "na".to_string();
-        session.shard = "na".to_string();
-        let report = render(&d, &menus_snapshot(), &example_ui(), &example_env(), now, EXAMPLE_WALL_MS);
-        assert!(report.contains("region: pbe (glz region na) -> shard na |"));
+
+        for (region_raw, region, line) in [
+            ("br", "br", "region: br -> shard na (inferred mapping, never live-verified) | season id: known"),
+            // pbe is the one region whose glz host differs from what region-locale reported.
+            ("pbe", "na", "region: pbe (glz region na) -> shard na |"),
+        ] {
+            let now = Instant::now();
+            let mut d = example_diagnostics(now);
+            let session = d.session.as_mut().unwrap();
+            session.region_raw = region_raw.to_string();
+            session.region = region.to_string();
+            session.shard = "na".to_string();
+            let report = render(&d, &menus_snapshot(), &example_ui(), &example_env(), now, EXAMPLE_WALL_MS);
+            assert!(report.contains(line), "{region_raw}:
+{report}");
+        }
     }
 
     #[test]

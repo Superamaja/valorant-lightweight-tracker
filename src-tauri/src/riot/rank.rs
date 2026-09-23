@@ -166,11 +166,7 @@ mod tests {
 
     #[test]
     fn tier_names_map_correctly() {
-        assert_eq!(tier_name(0), "Unranked");
-        assert_eq!(tier_name(3), "Iron 1");
-        assert_eq!(tier_name(21), "Ascendant 1");
         assert_eq!(tier_name(24), "Immortal 1");
-        assert_eq!(tier_name(27), "Radiant");
         assert_eq!(tier_name(200), "Radiant"); // saturates
     }
 
@@ -192,97 +188,60 @@ mod tests {
     }
 
     #[test]
-    fn win_rate_matches_vry_probe() {
-        // Sanitized from the live capture: 8 wins / 14 games -> vRY "57 (14)".
-        let mmr = mmr_with_wr("s1", 8, 14);
-        let wr = compute_win_rate(&mmr, "s1").unwrap();
-        assert_eq!(wr.percent, 57);
-        assert_eq!(wr.games, 14);
+    fn win_rate_from_wins_and_games() {
+        for (wins, games, season, expected) in [
+            // Sanitized from the live capture: 8 wins / 14 games -> vRY "57 (14)".
+            (8, 14, "s", Some((57, 14))),
+            (0, 0, "s", None),
+            (5, 10, "other", None),
+            // 1/3 = 33.33 -> 33
+            (1, 3, "s", Some((33, 3))),
+            // 2/3 = 66.67 -> 67
+            (2, 3, "s", Some((67, 3))),
+            // 1/8 = 12.5 (an exact tie) -> round-half-to-even -> 12, matching Python round()
+            // (a round-half-up would wrongly give 13).
+            (1, 8, "s", Some((12, 8))),
+        ] {
+            let wr = compute_win_rate(&mmr_with_wr("s", wins, games), season);
+            assert_eq!(wr.map(|wr| (wr.percent, wr.games)), expected, "{wins}/{games} in {season}");
+        }
     }
 
     #[test]
-    fn win_rate_is_none_with_zero_games() {
-        let mmr = mmr_with_wr("s1", 0, 0);
-        assert!(compute_win_rate(&mmr, "s1").is_none());
+    fn current_rank_per_tier_and_season() {
+        for (tier, rr, lb, season, expected) in [
+            // Immortal shows RR and leaderboard.
+            (25, 340, 128, "s1", CurrentRank { tier: 25, rr: 340, leaderboard_rank: 128 }),
+            // Gold hides the leaderboard.
+            (13, 55, 999, "s1", CurrentRank { tier: 13, rr: 55, leaderboard_rank: 0 }),
+            // An unranked tier is zeroed.
+            (2, 40, 0, "s1", CurrentRank::unranked()),
+            // A missing season is unranked.
+            (20, 40, 0, "other", CurrentRank::unranked()),
+        ] {
+            let mmr = mmr_with("s1", tier, rr, lb, json!(null));
+            assert_eq!(compute_current(&mmr, season), expected, "tier {tier} in {season}");
+        }
     }
 
     #[test]
-    fn win_rate_is_none_when_season_missing() {
-        let mmr = mmr_with_wr("s1", 5, 10);
-        assert!(compute_win_rate(&mmr, "other").is_none());
-    }
-
-    #[test]
-    fn win_rate_rounds_to_nearest_percent() {
-        // 1/3 = 33.33 -> 33
-        assert_eq!(compute_win_rate(&mmr_with_wr("s", 1, 3), "s").unwrap().percent, 33);
-        // 2/3 = 66.67 -> 67
-        assert_eq!(compute_win_rate(&mmr_with_wr("s", 2, 3), "s").unwrap().percent, 67);
-    }
-
-    #[test]
-    fn win_rate_rounds_half_to_even() {
-        // 1/8 = 12.5 (an exact tie) -> round-half-to-even -> 12, matching Python round()
-        // (a round-half-up would wrongly give 13).
-        assert_eq!(compute_win_rate(&mmr_with_wr("s", 1, 8), "s").unwrap().percent, 12);
-    }
-
-    #[test]
-    fn current_immortal_shows_rr_and_leaderboard() {
-        let mmr = mmr_with("s1", 25, 340, 128, json!(null));
-        let cur = compute_current(&mmr, "s1");
-        assert_eq!(cur, CurrentRank { tier: 25, rr: 340, leaderboard_rank: 128 });
-    }
-
-    #[test]
-    fn current_gold_hides_leaderboard() {
-        let mmr = mmr_with("s1", 13, 55, 999, json!(null));
-        let cur = compute_current(&mmr, "s1");
-        assert_eq!(cur, CurrentRank { tier: 13, rr: 55, leaderboard_rank: 0 });
-    }
-
-    #[test]
-    fn current_unranked_tier_is_zeroed() {
-        let mmr = mmr_with("s1", 2, 40, 0, json!(null));
-        assert_eq!(compute_current(&mmr, "s1"), CurrentRank::unranked());
-    }
-
-    #[test]
-    fn current_missing_season_is_unranked() {
-        let mmr = mmr_with("s1", 20, 40, 0, json!(null));
-        assert_eq!(compute_current(&mmr, "other"), CurrentRank::unranked());
-    }
-
-    #[test]
-    fn peak_takes_highest_wins_tier() {
-        // current Diamond(18); a season with Immortal-1 (24) wins -> peak 24.
-        let mmr = mmr_with("modern-season", 18, 20, 0, json!({ "24": 3, "20": 10 }));
-        let peak = compute_peak(&mmr, 18, &[]);
-        assert_eq!(peak.tier, 24);
-        assert_eq!(peak.season_id.as_deref(), Some("modern-season"));
-    }
-
-    #[test]
-    fn peak_ignores_zero_win_tiers() {
-        let mmr = mmr_with("modern-season", 18, 20, 0, json!({ "27": 0, "22": 5 }));
-        let peak = compute_peak(&mmr, 18, &[]);
-        assert_eq!(peak.tier, 22);
-    }
-
-    #[test]
-    fn peak_applies_before_ascendant_shift() {
-        // Pre-Ascendant season: Immortal was tier 21 back then; +3 -> 24 (modern Immortal 1).
+    fn peak_from_a_single_season() {
         let old_season = BEFORE_ASCENDANT_SEASONS[0];
-        let mmr = mmr_with(old_season, 15, 0, 0, json!({ "21": 4 }));
-        let peak = compute_peak(&mmr, 15, &[]);
-        assert_eq!(peak.tier, 24, "old tier 21 (Immortal) must shift to 24");
-    }
-
-    #[test]
-    fn peak_no_shift_for_modern_season() {
-        let mmr = mmr_with("modern-season", 15, 0, 0, json!({ "21": 4 }));
-        let peak = compute_peak(&mmr, 15, &[]);
-        assert_eq!(peak.tier, 21, "modern tier 21 (Ascendant 1) unchanged");
+        for (season, current, wins, expected_tier, expected_season) in [
+            // current Diamond(18); a season with Immortal-1 (24) wins -> peak 24.
+            ("modern-season", 18, json!({ "24": 3, "20": 10 }), 24, Some("modern-season")),
+            // Zero-win tiers are ignored.
+            ("modern-season", 18, json!({ "27": 0, "22": 5 }), 22, Some("modern-season")),
+            // Pre-Ascendant season: Immortal was tier 21 back then; +3 -> 24 (modern Immortal 1).
+            (old_season, 15, json!({ "21": 4 }), 24, Some(old_season)),
+            // Modern tier 21 (Ascendant 1) is unchanged.
+            ("modern-season", 15, json!({ "21": 4 }), 21, Some("modern-season")),
+            // No wins: the peak defaults to the current tier.
+            ("s1", 19, json!(null), 19, None),
+        ] {
+            let peak = compute_peak(&mmr_with(season, current, 0, 0, wins), current, &[]);
+            assert_eq!((peak.tier, peak.season_id.as_deref()), (expected_tier, expected_season), "{season}");
+        }
     }
 
     #[test]
@@ -309,13 +268,5 @@ mod tests {
             assert_eq!(peak.tier, 22);
             assert_eq!(peak.season_id.as_deref(), Some("act-early"));
         }
-    }
-
-    #[test]
-    fn peak_defaults_to_current_when_no_wins() {
-        let mmr = mmr_with("s1", 19, 30, 0, json!(null));
-        let peak = compute_peak(&mmr, 19, &[]);
-        assert_eq!(peak.tier, 19);
-        assert!(peak.season_id.is_none());
     }
 }

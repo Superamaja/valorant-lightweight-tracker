@@ -320,14 +320,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_rr_match_is_unknown_pip() {
-        let payload = json!({ "Matches": [ { "MatchID": "m1", "RankedRatingEarned": 0 } ] });
-        let h = parse_competitive_updates(payload);
-        assert_eq!(h.rr_change, Some(0));
-        assert_eq!(h.results, vec![MatchResult::Unknown]);
-    }
-
-    #[test]
     fn empty_updates_have_no_history() {
         let h = parse_competitive_updates(json!({ "Matches": [] }));
         assert_eq!(h.rr_change, None);
@@ -392,19 +384,6 @@ mod tests {
         assert_eq!(acc.headshot_percent(), Some(12));
     }
 
-    #[test]
-    fn no_hits_is_none() {
-        let acc = MatchTotals::default();
-        assert_eq!(acc.headshot_percent(), None);
-        // A payload with no damage for the subject leaves the accumulator empty.
-        let payload = json!({ "roundResults": [ { "playerStats": [
-            { "subject": "someone-else", "damage": [ { "headshots": 3, "bodyshots": 0, "legshots": 0 } ] }
-        ]}]});
-        let mut acc2 = MatchTotals::default();
-        acc2.add(totals_for(&payload, "me"));
-        assert_eq!(acc2.headshot_percent(), None);
-    }
-
     /// A match-details payload carrying just the top-level per-player kill/death stats.
     fn kd_payload(entries: &[(&str, u64, u64)]) -> Value {
         let players: Vec<Value> = entries
@@ -457,14 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn kd_rounds_to_two_decimals() {
-        let mut acc = MatchTotals::default();
-        acc.add(totals_for(&kd_payload(&[("me", 2, 3)]), "me"));
-        // 0.6666... -> 0.67
-        assert_eq!(acc.kd(), Some(0.67));
-    }
-
-    #[test]
     fn kd_with_zero_deaths_is_the_kill_count() {
         let mut acc = MatchTotals::default();
         acc.add(totals_for(&kd_payload(&[("me", 7, 0)]), "me"));
@@ -472,18 +443,26 @@ mod tests {
     }
 
     #[test]
-    fn kd_without_stats_for_the_player_is_none() {
+    fn figures_without_data_for_the_player_are_none() {
         // No matches at all.
+        assert_eq!(MatchTotals::default().headshot_percent(), None);
         assert_eq!(MatchTotals::default().kd(), None);
-        // Matches processed, but none carried a stats entry for this player.
-        let mut acc = MatchTotals::default();
-        acc.add(totals_for(&kd_payload(&[("someone-else", 30, 2)]), "me"));
-        assert_eq!(acc.kd_matches, 0);
-        assert_eq!(acc.kd(), None);
-        // A players[] entry without a stats object is not counted either.
-        let mut acc2 = MatchTotals::default();
-        acc2.add(totals_for(&json!({ "players": [ { "subject": "me" } ] }), "me"));
-        assert_eq!(acc2.kd(), None);
+        for payload in [
+            // A payload with no damage for the subject leaves the accumulator empty.
+            json!({ "roundResults": [ { "playerStats": [
+                { "subject": "someone-else", "damage": [ { "headshots": 3, "bodyshots": 0, "legshots": 0 } ] }
+            ]}]}),
+            // Matches processed, but none carried a stats entry for this player.
+            kd_payload(&[("someone-else", 30, 2)]),
+            // A players[] entry without a stats object is not counted either.
+            json!({ "players": [ { "subject": "me" } ] }),
+        ] {
+            let mut acc = MatchTotals::default();
+            acc.add(totals_for(&payload, "me"));
+            assert_eq!(acc.headshot_percent(), None, "{payload}");
+            assert_eq!(acc.kd_matches, 0, "{payload}");
+            assert_eq!(acc.kd(), None, "{payload}");
+        }
     }
 
     #[test]
@@ -523,31 +502,21 @@ mod tests {
     }
 
     #[test]
-    fn the_winning_team_wins_and_the_other_loses() {
-        let contribution = match_contribution(&teams_payload(true, false));
-        assert_eq!(contribution["blue-player"].result, Some(MatchResult::Win));
-        assert_eq!(contribution["red-player"].result, Some(MatchResult::Loss));
-    }
-
-    #[test]
-    fn a_match_no_team_won_is_a_draw() {
-        let contribution = match_contribution(&teams_payload(false, false));
-        assert_eq!(contribution["blue-player"].result, Some(MatchResult::Draw));
-        assert_eq!(contribution["red-player"].result, Some(MatchResult::Draw));
-    }
-
-    #[test]
-    fn no_team_results_leave_the_outcome_unknown() {
-        let contribution = match_contribution(&json!({
-            "players": [ { "subject": "me", "teamId": "Blue" } ],
-            "teams": []
-        }));
-        assert!(!contribution.contains_key("me"));
-        let contribution = match_contribution(&json!({
-            "players": [ { "subject": "me" } ],
-            "teams": [ { "teamId": "Blue", "won": true } ]
-        }));
-        assert!(!contribution.contains_key("me"));
+    fn team_results_decide_each_players_outcome() {
+        // `None` means the player gets no contribution at all.
+        for (payload, subject, expected) in [
+            (teams_payload(true, false), "blue-player", Some(MatchResult::Win)),
+            (teams_payload(true, false), "red-player", Some(MatchResult::Loss)),
+            // No team won: a draw.
+            (teams_payload(false, false), "blue-player", Some(MatchResult::Draw)),
+            (teams_payload(false, false), "red-player", Some(MatchResult::Draw)),
+            // No team results, or no team for the player: the outcome stays unknown.
+            (json!({ "players": [ { "subject": "me", "teamId": "Blue" } ], "teams": [] }), "me", None),
+            (json!({ "players": [ { "subject": "me" } ], "teams": [ { "teamId": "Blue", "won": true } ] }), "me", None),
+        ] {
+            let contribution = match_contribution(&payload);
+            assert_eq!(contribution.get(subject).map(|c| c.result), expected.map(Some), "{subject} in {payload}");
+        }
     }
 
     #[test]

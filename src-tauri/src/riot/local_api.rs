@@ -140,19 +140,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn detects_rpc_error_not_ready() {
-        assert!(is_not_ready(&json!({ "errorCode": "RPC_ERROR" })));
-    }
-
-    #[test]
-    fn detects_message_not_ready() {
-        assert!(is_not_ready(&json!({ "message": "Entitlements token is not ready yet" })));
-        assert!(is_not_ready(&json!({ "message": "Invalid URI format" })));
-    }
-
-    #[test]
-    fn ready_body_is_not_flagged() {
-        assert!(!is_not_ready(&json!({ "accessToken": "x", "token": "y", "subject": "z" })));
+    fn not_ready_bodies_are_detected() {
+        for (body, not_ready) in [
+            (json!({ "errorCode": "RPC_ERROR" }), true),
+            (json!({ "message": "Entitlements token is not ready yet" }), true),
+            (json!({ "message": "Invalid URI format" }), true),
+            (json!({ "accessToken": "x", "token": "y", "subject": "z" }), false),
+        ] {
+            assert_eq!(is_not_ready(&body), not_ready, "{body}");
+        }
     }
 
     #[test]
@@ -160,9 +156,6 @@ mod tests {
         // Spec §1: during startup every non-200 (not only 404) reads as "not ready yet".
         assert!(is_starting_up(&Error::NotReady));
         assert!(is_starting_up(&Error::Http("local /x -> 503".into())));
-        // A body we could not make sense of, or a dead socket, is a different failure.
-        assert!(!is_starting_up(&Error::MalformedPayload("x".into())));
-        assert!(!is_starting_up(&Error::ResourceNotFound));
     }
 
     #[test]

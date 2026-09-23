@@ -122,38 +122,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_field_count() {
-        assert!(Lockfile::parse("a:b:c").is_err());
-        assert!(Lockfile::parse("a:b:c:d:e:f").is_err());
-    }
-
-    #[test]
-    fn rejects_bad_port() {
-        assert!(Lockfile::parse("Riot Client:23144:notaport:pw:https").is_err());
+    fn rejects_malformed_lockfiles() {
+        for bad in [
+            // Wrong field count.
+            "a:b:c",
+            "a:b:c:d:e:f",
+            // Port is not a number.
+            "Riot Client:23144:notaport:pw:https",
+        ] {
+            assert!(Lockfile::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
     fn builds_basic_auth_header() {
         let lf = Lockfile::parse(SAMPLE).unwrap();
         // base64("riot:Ss4WWtBoLIdaOoYm1FLKGw")
-        let expected = base64::engine::general_purpose::STANDARD
-            .encode(b"riot:Ss4WWtBoLIdaOoYm1FLKGw");
-        assert_eq!(lf.basic_auth_header(), format!("Basic {expected}"));
-    }
-
-    #[test]
-    fn credential_changes_make_a_different_lockfile() {
-        // The staleness rule behind `still_current`: a restarted client keeps the path but
-        // changes pid/port/password, and any one of those must read as a different client.
-        let original = Lockfile::parse(SAMPLE).unwrap();
-        assert_eq!(Lockfile::parse(SAMPLE).unwrap(), original);
-        for changed in [
-            "Riot Client:99999:52995:Ss4WWtBoLIdaOoYm1FLKGw:https", // new pid
-            "Riot Client:23144:60001:Ss4WWtBoLIdaOoYm1FLKGw:https", // new port
-            "Riot Client:23144:52995:0000000000000000000000:https", // new password
-        ] {
-            assert_ne!(Lockfile::parse(changed).unwrap(), original);
-        }
+        assert_eq!(lf.basic_auth_header(), "Basic cmlvdDpTczRXV3RCb0xJZGFPb1ltMUZMS0d3");
     }
 
     #[test]

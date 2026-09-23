@@ -416,27 +416,21 @@ mod tests {
     }
 
     #[test]
-    fn missing_player_identity_defaults_to_the_private_side() {
-        // No PlayerIdentity at all: treat the row as incognito with a hidden level rather
-        // than exposing a name/level we cannot confirm the player agreed to show.
-        let payload = json!({ "Players": [ { "Subject": "me", "TeamID": "Blue" } ] });
-        let data = extract_coregame(payload, "me").unwrap();
-        assert!(data.players[0].incognito);
-        assert!(data.players[0].hide_account_level);
-        assert_eq!(data.players[0].account_level, 0);
-    }
-
-    #[test]
-    fn unparseable_player_identity_keeps_the_row_and_stays_private() {
-        // A PlayerIdentity of an unexpected shape must not fail the whole roster, and must
-        // not fall through to "exposed".
-        let payload = json!({
-            "Players": [ { "Subject": "me", "TeamID": "Blue", "PlayerIdentity": "garbage" } ]
-        });
-        let data = extract_coregame(payload, "me").unwrap();
-        assert_eq!(data.players.len(), 1);
-        assert!(data.players[0].incognito);
-        assert!(data.players[0].hide_account_level);
+    fn an_absent_or_unreadable_player_identity_stays_private() {
+        for player in [
+            // No PlayerIdentity at all: treat the row as incognito with a hidden level rather
+            // than exposing a name/level we cannot confirm the player agreed to show.
+            json!({ "Subject": "me", "TeamID": "Blue" }),
+            // A PlayerIdentity of an unexpected shape must not fail the whole roster, and must
+            // not fall through to "exposed".
+            json!({ "Subject": "me", "TeamID": "Blue", "PlayerIdentity": "garbage" }),
+        ] {
+            let data = extract_coregame(json!({ "Players": [player] }), "me").unwrap();
+            assert_eq!(data.players.len(), 1);
+            assert!(data.players[0].incognito);
+            assert!(data.players[0].hide_account_level);
+            assert_eq!(data.players[0].account_level, 0);
+        }
     }
 
     #[test]

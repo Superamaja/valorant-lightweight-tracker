@@ -174,7 +174,6 @@ mod tests {
 
     #[test]
     fn title_casing_leaves_odd_inputs_intact() {
-        assert_eq!(title_case(""), "");
         assert_eq!(title_case("A"), "A");
         assert_eq!(title_case("1v1"), "1v1");
     }

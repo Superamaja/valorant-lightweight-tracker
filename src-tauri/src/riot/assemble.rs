@@ -256,10 +256,11 @@ mod tests {
     }
 
     #[test]
-    fn incognito_hides_name_but_not_for_self() {
+    fn incognito_hides_name_and_account_level_except_for_self() {
+        // Incognito withholds accountLevel too (contract), independent of hide_account_level.
         let mut me = base_player("me", "Blue");
         me.incognito = true;
-        let mut foe = base_player("foe", "Red");
+        let mut foe = base_player("foe", "Red"); // incognito, hide_account_level == false
         foe.incognito = true;
         let players = vec![me, foe];
         let mut names = HashMap::new();
@@ -270,18 +271,6 @@ mod tests {
         assert_eq!(row(&rows, "me").name.as_deref(), Some("Me#1")); // self visible
         assert_eq!(row(&rows, "foe").name, None); // incognito enemy hidden
         assert!(row(&rows, "foe").incognito);
-    }
-
-    #[test]
-    fn incognito_hides_account_level_except_for_self() {
-        // Incognito withholds accountLevel too (contract), independent of hide_account_level.
-        let mut me = base_player("me", "Blue");
-        me.incognito = true;
-        let mut foe = base_player("foe", "Red"); // incognito, hide_account_level == false
-        foe.incognito = true;
-        let players = vec![me, foe];
-        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
-        let rows = case.run(&players, "me");
         assert_eq!(row(&rows, "me").account_level, Some(100)); // self always sees own level
         assert_eq!(row(&rows, "foe").account_level, None); // incognito enemy level withheld
     }

@@ -69,23 +69,20 @@ mod tests {
     use super::short;
 
     #[test]
-    fn truncates_a_long_id_to_eight_characters() {
-        assert_eq!(short("0123456789abcdef"), "01234567");
-    }
-
-    #[test]
-    fn a_short_id_is_returned_whole() {
-        assert_eq!(short(""), "");
-        assert_eq!(short("abc"), "abc");
-        assert_eq!(short("01234567"), "01234567");
-    }
-
-    #[test]
-    fn a_multibyte_boundary_falls_back_to_the_whole_id() {
-        // Byte 8 lands inside the third 3-byte character, so no 8-byte prefix is a valid
-        // string and the id survives intact rather than panicking.
-        assert_eq!(short("日日日日"), "日日日日");
-        // ...while a boundary that does land cleanly still truncates.
-        assert_eq!(short("ééééabcd"), "éééé");
+    fn short_truncates_to_eight_bytes_on_a_char_boundary() {
+        for (id, expected) in [
+            ("0123456789abcdef", "01234567"),
+            // A short id is returned whole.
+            ("", ""),
+            ("abc", "abc"),
+            ("01234567", "01234567"),
+            // Byte 8 lands inside the third 3-byte character, so no 8-byte prefix is a valid
+            // string and the id survives intact rather than panicking.
+            ("日日日日", "日日日日"),
+            // ...while a boundary that does land cleanly still truncates.
+            ("ééééabcd", "éééé"),
+        ] {
+            assert_eq!(short(id), expected, "{id:?}");
+        }
     }
 }

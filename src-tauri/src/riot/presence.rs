@@ -192,29 +192,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_private_is_not_ready() {
-        assert!(matches!(decode_private(""), Err(Error::NotReady)));
-    }
-
-    #[test]
-    fn decodes_nested_shape() {
-        let decoded = json!({
+    fn decodes_nested_and_flat_shapes() {
+        let nested = json!({
             "matchPresenceData": { "sessionLoopState": "INGAME", "queueId": "competitive" },
             "partyPresenceData": { "partyState": "DEFAULT", "partyId": "party-1", "partySize": 3 },
             "playerPresenceData": { "accountLevel": 275 }
         });
-        let info = extract_info(&decoded);
-        assert_eq!(info.session_state, Some(SessionLoopState::Ingame));
-        assert_eq!(info.session_state_raw.as_deref(), Some("INGAME"));
-        assert_eq!(info.queue_id.as_deref(), Some("competitive"));
-        assert_eq!(info.account_level, Some(275));
-        assert_eq!(info.party_id.as_deref(), Some("party-1"));
-        assert_eq!(info.party_size, Some(3));
-    }
-
-    #[test]
-    fn decodes_flat_shape() {
-        let decoded = json!({
+        let flat = json!({
             "sessionLoopState": "PREGAME",
             "queueId": "unrated",
             "partyState": "DEFAULT",
@@ -222,12 +206,18 @@ mod tests {
             "partySize": 1,
             "accountLevel": 42
         });
-        let info = extract_info(&decoded);
-        assert_eq!(info.session_state, Some(SessionLoopState::Pregame));
-        assert_eq!(info.session_state_raw.as_deref(), Some("PREGAME"));
-        assert_eq!(info.queue_id.as_deref(), Some("unrated"));
-        assert_eq!(info.account_level, Some(42));
-        assert_eq!(info.party_size, Some(1));
+        for (decoded, state, raw, queue, level, party_id, party_size) in [
+            (nested, SessionLoopState::Ingame, "INGAME", "competitive", 275, "party-1", 3),
+            (flat, SessionLoopState::Pregame, "PREGAME", "unrated", 42, "party-2", 1),
+        ] {
+            let info = extract_info(&decoded);
+            assert_eq!(info.session_state, Some(state));
+            assert_eq!(info.session_state_raw.as_deref(), Some(raw));
+            assert_eq!(info.queue_id.as_deref(), Some(queue));
+            assert_eq!(info.account_level, Some(level));
+            assert_eq!(info.party_id.as_deref(), Some(party_id));
+            assert_eq!(info.party_size, Some(party_size));
+        }
     }
 
     #[test]
@@ -251,15 +241,13 @@ mod tests {
     }
 
     #[test]
-    fn detects_custom_game_via_provisioning_flow() {
-        let decoded = json!({ "sessionLoopState": "INGAME", "provisioningFlow": "CustomGame" });
-        assert!(extract_info(&decoded).is_custom_game());
-    }
-
-    #[test]
-    fn detects_custom_game_via_party_state() {
-        let decoded = json!({ "sessionLoopState": "MENUS", "partyState": "CUSTOM_GAME_SETUP" });
-        assert!(extract_info(&decoded).is_custom_game());
+    fn detects_custom_games() {
+        for decoded in [
+            json!({ "sessionLoopState": "INGAME", "provisioningFlow": "CustomGame" }),
+            json!({ "sessionLoopState": "MENUS", "partyState": "CUSTOM_GAME_SETUP" }),
+        ] {
+            assert!(extract_info(&decoded).is_custom_game(), "{decoded}");
+        }
     }
 
     #[test]

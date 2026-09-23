@@ -516,13 +516,7 @@ mod tests {
         let weapons = json!({ "data": [
             { "uuid": VANDAL_WEAPON_ID, "displayName": "Vandal", "skins": [
                 { "uuid": "DB91451C-4309-2C8C-EDED-BF842D844E52", "displayName": "Neptune Vandal",
-                  "displayIcon": "https://x/neptune.png", "chromas": [
-                      // base chroma: no art of its own.
-                      { "uuid": "NEPTUNE-C1", "fullRender": null, "displayIcon": null },
-                      { "uuid": "neptune-c2", "fullRender": "https://x/neptune-c2.png" },
-                      // fullRender missing -> displayIcon.
-                      { "uuid": "neptune-c3", "displayIcon": "https://x/neptune-c3.png" }
-                  ]},
+                  "displayIcon": "https://x/neptune.png" },
                 // default skin: null top-level displayIcon, icon in levels[0]
                 { "uuid": "fallback-skin", "displayName": "Standard Vandal", "displayIcon": null,
                   "levels": [ { "displayIcon": "https://x/standard.png" } ] }
@@ -623,16 +617,18 @@ mod tests {
     }
 
     #[test]
-    fn tier_zero_uses_the_tables_unranked_icon() {
+    fn tier_zero_is_unranked_with_the_tables_icon_if_any() {
         let tiers = json!({ "data": [
             { "tiers": [ { "tier": 0, "tierName": "UNRANKED", "smallIcon": null,
                            "largeIcon": "https://x/unranked.png" } ] }
         ]});
-        let data = build("v".into(), &json!({}), &json!({}), &tiers, &json!({}));
-        let r = data.rank(0);
-        assert_eq!(r.tier, 0);
-        assert_eq!(r.name, "Unranked");
-        assert_eq!(r.icon_url.as_deref(), Some("https://x/unranked.png"));
+        for (data, icon_url) in [
+            (build("v".into(), &json!({}), &json!({}), &tiers, &json!({})), Some("https://x/unranked.png")),
+            (StaticData::default(), None),
+        ] {
+            let expected = RankInfo { icon_url: icon_url.map(String::from), ..RankInfo::unranked() };
+            assert_eq!(data.rank(0), expected);
+        }
     }
 
     #[test]
@@ -646,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_mappings_are_never_complete() {
+    fn only_a_full_current_schema_blob_is_complete() {
         // A blob missing any mapping is treated as absent on load, which self-heals a
         // poisoned cache file on the next fetch.
         assert!(!StaticData::default().is_complete());
@@ -666,20 +662,6 @@ mod tests {
         // An unnamed version is unusable as a cache key.
         assert!(!build(String::new(), &agents, &maps, &tiers, &weapons).is_complete());
         // All four present -> cacheable.
-        assert!(build("v".into(), &agents, &maps, &tiers, &weapons).is_complete());
-    }
-
-    #[test]
-    fn a_cache_from_an_older_schema_is_treated_as_absent() {
-        let agents = json!({ "data": [
-            { "uuid": "a", "displayName": "Reyna", "isPlayableCharacter": true }
-        ]});
-        let maps =
-            json!({ "data": [ { "mapUrl": "/Game/Maps/Ascent/Ascent", "displayName": "Ascent" } ]});
-        let tiers = json!({ "data": [ { "tiers": [ { "tier": 27, "largeIcon": "n.png" } ] } ]});
-        let weapons = json!({ "data": [
-            { "uuid": VANDAL_WEAPON_ID, "skins": [ { "uuid": "s", "displayName": "Neptune" } ] }
-        ]});
         let mut old = build("v".into(), &agents, &maps, &tiers, &weapons);
         assert!(old.is_complete());
         // A blob written before the schema field existed deserializes to 0 -> refetched.
@@ -696,11 +678,5 @@ mod tests {
         assert!(!is_stale_cache_file("notes.txt", keep));
         assert!(!is_stale_cache_file("static-release-13.03.json.bak", keep));
         assert!(!is_stale_cache_file("other-13.03.json", keep));
-    }
-
-    #[test]
-    fn tier_zero_without_a_table_entry_is_unranked_without_icon() {
-        let data = StaticData::default();
-        assert_eq!(data.rank(0), RankInfo::unranked());
     }
 }

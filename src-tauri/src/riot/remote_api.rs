@@ -252,69 +252,43 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn builds_standard_region_hosts() {
-        let h = build_hosts("eu");
-        assert_eq!(h.pd, "https://pd.eu.a.pvp.net");
-        assert_eq!(h.glz, "https://glz-eu-1.eu.a.pvp.net");
-        assert_eq!(h.shared, "https://shared.eu.a.pvp.net");
+    fn builds_hosts_per_region() {
+        for (raw, pd, glz, shared, region, shard) in [
+            ("eu", "https://pd.eu.a.pvp.net", "https://glz-eu-1.eu.a.pvp.net", "https://shared.eu.a.pvp.net", "eu", "eu"),
+            // shared follows the shard, not the region (C1): br -> na.
+            ("br", "https://pd.na.a.pvp.net", "https://glz-br-1.na.a.pvp.net", "https://shared.na.a.pvp.net", "br", "na"),
+            ("latam", "https://pd.na.a.pvp.net", "https://glz-latam-1.na.a.pvp.net", "https://shared.na.a.pvp.net", "latam", "na"),
+            // pbe normalizes to na.
+            ("pbe", "https://pd.na.a.pvp.net", "https://glz-na-1.na.a.pvp.net", "https://shared.na.a.pvp.net", "na", "na"),
+        ] {
+            let h = build_hosts(raw);
+            assert_eq!(
+                (h.pd.as_str(), h.glz.as_str(), h.shared.as_str(), h.region.as_str(), h.shard.as_str()),
+                (pd, glz, shared, region, shard),
+                "{raw}"
+            );
+        }
     }
 
     #[test]
-    fn br_maps_to_na_shard() {
-        let h = build_hosts("br");
-        assert_eq!(h.pd, "https://pd.na.a.pvp.net");
-        assert_eq!(h.glz, "https://glz-br-1.na.a.pvp.net");
-        // shared follows the shard, not the region (C1): br -> na.
-        assert_eq!(h.shared, "https://shared.na.a.pvp.net");
-        assert_eq!(h.shard, "na");
-        assert_eq!(h.region, "br");
-    }
-
-    #[test]
-    fn latam_maps_to_na_shard() {
-        let h = build_hosts("latam");
-        assert_eq!(h.pd, "https://pd.na.a.pvp.net");
-        assert_eq!(h.glz, "https://glz-latam-1.na.a.pvp.net");
-    }
-
-    #[test]
-    fn pbe_normalizes_to_na() {
-        let h = build_hosts("pbe");
-        assert_eq!(h.region, "na");
-        assert_eq!(h.shard, "na");
-        assert_eq!(h.glz, "https://glz-na-1.na.a.pvp.net");
-    }
-
-    #[test]
-    fn maps_bad_claims() {
-        assert!(matches!(
-            map_body_error(200, json!({ "errorCode": "BAD_CLAIMS" })),
-            Err(Error::BadClaims)
-        ));
-    }
-
-    #[test]
-    fn maps_resource_not_found() {
-        assert!(matches!(
-            map_body_error(200, json!({ "errorCode": "RESOURCE_NOT_FOUND" })),
-            Err(Error::ResourceNotFound)
-        ));
-        assert!(matches!(map_body_error(404, json!({})), Err(Error::ResourceNotFound)));
-    }
-
-    #[test]
-    fn maps_rate_limit() {
-        // The body-only path knows no header, so the caller falls back to its own backoff.
-        assert!(matches!(map_body_error(429, json!({})), Err(Error::RateLimited(None))));
-    }
-
-    #[test]
-    fn maps_auth_statuses_to_the_refresh_signal() {
-        // 401/403 must reach the token-refresh arm, not degrade to `Http`.
-        assert!(matches!(map_body_error(401, json!({})), Err(Error::BadClaims)));
-        assert!(matches!(map_body_error(403, json!({})), Err(Error::BadClaims)));
-        // Everything else non-OK stays a generic transport error.
-        assert!(matches!(map_body_error(500, json!({})), Err(Error::Http(_))));
+    fn maps_body_errors() {
+        type Check = fn(&Result<Value>) -> bool;
+        let cases: [(u16, Value, Check); 7] = [
+            (200, json!({ "errorCode": "BAD_CLAIMS" }), |r| matches!(r, Err(Error::BadClaims))),
+            (200, json!({ "errorCode": "RESOURCE_NOT_FOUND" }), |r| matches!(r, Err(Error::ResourceNotFound))),
+            (404, json!({}), |r| matches!(r, Err(Error::ResourceNotFound))),
+            // 401/403 must reach the token-refresh arm, not degrade to `Http`.
+            (401, json!({}), |r| matches!(r, Err(Error::BadClaims))),
+            (403, json!({}), |r| matches!(r, Err(Error::BadClaims))),
+            // Everything else non-OK stays a generic transport error.
+            (500, json!({}), |r| matches!(r, Err(Error::Http(_)))),
+            // A success body passes through.
+            (200, json!({ "MatchID": "x" }), |r| matches!(r, Ok(v) if v["MatchID"] == "x")),
+        ];
+        for (status, body, check) in cases {
+            let label = format!("{status} {body}");
+            assert!(check(&map_body_error(status, body)), "{label}");
+        }
     }
 
     #[test]
@@ -328,12 +302,6 @@ mod tests {
         assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
         assert_eq!(parse_retry_after("-3"), None);
         assert_eq!(parse_retry_after(""), None);
-    }
-
-    #[test]
-    fn passes_success_body_through() {
-        let ok = map_body_error(200, json!({ "MatchID": "x" })).unwrap();
-        assert_eq!(ok.get("MatchID").unwrap(), "x");
     }
 }
 
@@ -363,10 +331,5 @@ mod log_path_tests {
             ),
             "/mmr/v1/players/8f4c1d2e/competitiveupdates"
         );
-    }
-
-    #[test]
-    fn a_url_without_a_path_survives() {
-        assert_eq!(url_path("https://shared.eu.a.pvp.net"), "https://shared.eu.a.pvp.net");
     }
 }

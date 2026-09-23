@@ -2119,24 +2119,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_pregame_polls_on_a_timer() {
-        // Agent select gets a bounded wait (no presence events for non-friends' picks); every
-        // other state stays purely event-driven.
-        assert_eq!(
-            poll_interval(AppStatus::Pregame, false),
-            Some(Duration::from_millis(PREGAME_POLL_MS))
-        );
-        assert_eq!(poll_interval(AppStatus::Ingame, false), None);
-        assert_eq!(poll_interval(AppStatus::Menus, false), None);
-        assert_eq!(poll_interval(AppStatus::ValorantNotRunning, false), None);
-    }
-
-    #[test]
-    fn a_fully_locked_agent_select_stops_ticking() {
-        // Nothing in the pregame payload can change once every ally has locked in, and the
-        // transition into the match arrives as an own-presence poke.
-        assert_eq!(poll_interval(AppStatus::Pregame, true), None);
-        assert_eq!(poll_interval(AppStatus::Ingame, true), None);
+    fn only_an_unlocked_agent_select_polls_on_a_timer() {
+        for (status, locked, expected) in [
+            // Agent select gets a bounded wait (no presence events for non-friends' picks); every
+            // other state stays purely event-driven.
+            (AppStatus::Pregame, false, Some(Duration::from_millis(PREGAME_POLL_MS))),
+            (AppStatus::Ingame, false, None),
+            (AppStatus::Menus, false, None),
+            (AppStatus::ValorantNotRunning, false, None),
+            // Nothing in the pregame payload can change once every ally has locked in, and the
+            // transition into the match arrives as an own-presence poke.
+            (AppStatus::Pregame, true, None),
+            (AppStatus::Ingame, true, None),
+        ] {
+            assert_eq!(poll_interval(status, locked), expected, "{status:?} locked={locked}");
+        }
     }
 
     #[test]
@@ -2164,15 +2161,23 @@ mod tests {
     }
 
     #[test]
-    fn a_live_match_absorbs_a_short_presence_gap() {
-        // Own presence dropping out for a beat mid-match must not flash the waiting screen...
-        for streak in 0..NOT_READY_GRACE {
-            assert!(!not_ready_publishes(AppStatus::Ingame, streak), "streak {streak}");
-            assert!(!not_ready_publishes(AppStatus::Pregame, streak), "streak {streak}");
+    fn not_ready_is_published_once_the_states_grace_runs_out() {
+        for (status, grace) in [
+            // Own presence dropping out for a beat mid-match must not flash the waiting screen,
+            // but a gap that outlasts the grace is a real state change and gets published.
+            (AppStatus::Ingame, NOT_READY_GRACE),
+            (AppStatus::Pregame, NOT_READY_GRACE),
+            // Nothing on screen is worth protecting outside a match, so the placeholder goes out
+            // on the first attempt.
+            (AppStatus::Menus, 0),
+            (AppStatus::ValorantNotRunning, 0),
+        ] {
+            for streak in 0..grace {
+                assert!(!not_ready_publishes(status, streak), "{status:?} streak {streak}");
+            }
+            assert!(not_ready_publishes(status, grace), "{status:?}");
+            assert!(not_ready_publishes(status, grace + 1), "{status:?}");
         }
-        // ...but a gap that outlasts the grace is a real state change and gets published.
-        assert!(not_ready_publishes(AppStatus::Ingame, NOT_READY_GRACE));
-        assert!(not_ready_publishes(AppStatus::Pregame, NOT_READY_GRACE + 1));
     }
 
     #[test]
@@ -2187,14 +2192,6 @@ mod tests {
         // ...and any build that got through restores the full grace for the next gap.
         assert_eq!(next_not_ready_streak(streak, false), 0);
         assert!(!not_ready_publishes(AppStatus::Ingame, next_not_ready_streak(streak, false)));
-    }
-
-    #[test]
-    fn a_state_with_no_table_reports_not_ready_at_once() {
-        // Nothing on screen is worth protecting outside a match, so the placeholder goes out
-        // on the first attempt.
-        assert!(not_ready_publishes(AppStatus::Menus, 0));
-        assert!(not_ready_publishes(AppStatus::ValorantNotRunning, 0));
     }
 
     #[test]
@@ -2286,43 +2283,36 @@ mod tests {
     }
 
     #[test]
-    fn static_top_up_stops_once_the_live_version_is_held() {
-        // Complete and correctly keyed -> nothing to do (the steady state), however long ago
-        // the attempt that got us there was.
-        assert!(!needs_static_top_up("v2", true, "v2", None));
-        assert!(!needs_static_top_up("v2", true, "v2", Some(("v2", Duration::ZERO))));
-    }
-
-    #[test]
-    fn static_top_up_holds_off_for_the_cooldown_then_tries_again() {
-        // A bootstrap fetch that failed, and a valorant-api still serving the older patch,
-        // both leave the version unsatisfied. Inside the cooldown the 1 s agent-select poll
-        // must not spend a request...
-        for held in [("", false), ("v1", true)] {
-            assert!(!needs_static_top_up(held.0, held.1, "v2", Some(("v2", Duration::ZERO))));
-            assert!(!needs_static_top_up(
-                held.0,
-                held.1,
-                "v2",
-                Some(("v2", STATIC_TOP_UP_COOLDOWN - Duration::from_millis(1)))
-            ));
+    fn static_top_up_runs_only_for_a_missing_version_outside_its_cooldown() {
+        let just_short = STATIC_TOP_UP_COOLDOWN - Duration::from_millis(1);
+        for (held, complete, live, last, expected) in [
+            // Complete and correctly keyed -> nothing to do (the steady state), however long ago
+            // the attempt that got us there was.
+            ("v2", true, "v2", None, false),
+            ("v2", true, "v2", Some(("v2", Duration::ZERO)), false),
+            // A bootstrap fetch that failed, and a valorant-api still serving the older patch,
+            // both leave the version unsatisfied. Inside the cooldown the 1 s agent-select poll
+            // must not spend a request...
+            ("", false, "v2", Some(("v2", Duration::ZERO)), false),
+            ("", false, "v2", Some(("v2", just_short)), false),
+            ("v1", true, "v2", Some(("v2", Duration::ZERO)), false),
+            ("v1", true, "v2", Some(("v2", just_short)), false),
             // ...and once it elapses the session tries again, with no lifetime ceiling, so a
             // valorant-api that catches up mid-session is still picked up.
-            assert!(needs_static_top_up(held.0, held.1, "v2", Some(("v2", STATIC_TOP_UP_COOLDOWN))));
-            assert!(needs_static_top_up(
-                held.0,
-                held.1,
-                "v2",
-                Some(("v2", STATIC_TOP_UP_COOLDOWN * 100))
-            ));
+            ("", false, "v2", Some(("v2", STATIC_TOP_UP_COOLDOWN)), true),
+            ("", false, "v2", Some(("v2", STATIC_TOP_UP_COOLDOWN * 100)), true),
+            ("v1", true, "v2", Some(("v2", STATIC_TOP_UP_COOLDOWN)), true),
+            ("v1", true, "v2", Some(("v2", STATIC_TOP_UP_COOLDOWN * 100)), true),
+            // A patch mid-session is a new version, so it never waits out the old one's cooldown.
+            ("v1", true, "v3", Some(("v2", Duration::ZERO)), true),
+            ("v1", true, "v2", None, true),
+        ] {
+            assert_eq!(
+                needs_static_top_up(held, complete, live, last),
+                expected,
+                "held {held:?} complete={complete} live {live} last {last:?}"
+            );
         }
-    }
-
-    #[test]
-    fn static_top_up_cooldown_is_per_version() {
-        // A patch mid-session is a new version, so it never waits out the old one's cooldown.
-        assert!(needs_static_top_up("v1", true, "v3", Some(("v2", Duration::ZERO))));
-        assert!(needs_static_top_up("v1", true, "v2", None));
     }
 
     #[test]
@@ -2339,42 +2329,35 @@ mod tests {
     }
 
     #[test]
-    fn empty_cache_is_never_fresh() {
-        let c = MatchCache::default();
-        assert!(!c.is_fresh_for("m", false));
-        assert!(!c.is_fresh_for("m", true));
-    }
-
-    #[test]
-    fn fresh_only_when_enriched_same_match_and_state() {
-        let mut c = MatchCache::default();
-        c.begin_match("m", false);
-        // Phase-1 only (not yet enriched) -> still must run phase 2.
-        assert!(!c.is_fresh_for("m", false));
-        c.enriched = true;
-        assert!(c.is_fresh_for("m", false)); // same match + state, enriched
-        assert!(!c.is_fresh_for("other", false)); // different match
-    }
-
-    #[test]
-    fn pregame_cache_is_stale_when_ingame() {
-        // HIGH-1 core rule: pregame and coregame share the same match GUID, but a cache
-        // built in PREGAME lacks the enemy team and every loadout, so it must NOT be reused
-        // in INGAME.
-        let mut c = MatchCache::default();
-        c.begin_match("m", false); // built in PREGAME
-        c.enriched = true;
-        assert!(!c.is_fresh_for("m", true), "pregame cache must be stale once INGAME");
-        // ...but stays fresh while we remain in pregame.
-        assert!(c.is_fresh_for("m", false));
-    }
-
-    #[test]
-    fn ingame_cache_stays_fresh_ingame() {
-        let mut c = MatchCache::default();
-        c.begin_match("m", true);
-        c.enriched = true;
-        assert!(c.is_fresh_for("m", true));
+    fn is_fresh_only_when_enriched_for_the_same_match_and_state() {
+        // `built` is the state the cache was begun in, or `None` for an untouched cache.
+        for (built, enriched, match_id, ingame, fresh) in [
+            // An empty cache is never fresh.
+            (None, false, "m", false, false),
+            (None, false, "m", true, false),
+            // Phase-1 only (not yet enriched) -> still must run phase 2.
+            (Some(false), false, "m", false, false),
+            (Some(false), true, "m", false, true), // same match + state, enriched
+            (Some(false), true, "other", false, false), // different match
+            // HIGH-1 core rule: pregame and coregame share the same match GUID, but a cache
+            // built in PREGAME lacks the enemy team and every loadout, so it must NOT be reused
+            // in INGAME...
+            (Some(false), true, "m", true, false),
+            // ...but stays fresh while we remain in pregame.
+            (Some(false), true, "m", false, true),
+            (Some(true), true, "m", true, true),
+        ] {
+            let mut c = MatchCache::default();
+            if let Some(built_ingame) = built {
+                c.begin_match("m", built_ingame);
+            }
+            c.enriched = enriched;
+            assert_eq!(
+                c.is_fresh_for(match_id, ingame),
+                fresh,
+                "built {built:?} enriched={enriched} asked {match_id} ingame={ingame}"
+            );
+        }
     }
 
     #[test]
@@ -2393,10 +2376,14 @@ mod tests {
         assert!(!c.enriched);
         assert!(c.ingame);
 
-        // A different match id drops everything.
+        // A different match id drops everything, the cached roster included.
+        c.roster = Some(roster_of("p"));
+        c.enriched = true;
         c.begin_match("other", true);
         assert!(c.names.is_empty());
         assert!(c.mmr.is_empty());
+        assert!(c.roster.is_none());
+        assert!(c.cached_roster("other", true).is_none());
     }
 
     #[test]
@@ -2481,17 +2468,6 @@ mod tests {
         assert!(c.cached_roster("other", true).is_none());
         // Agent select changes the roster and the picks, so it always refetches.
         assert!(c.cached_roster("m", false).is_none());
-    }
-
-    #[test]
-    fn a_new_match_drops_the_cached_roster() {
-        let mut c = MatchCache::default();
-        c.begin_match("m", true);
-        c.roster = Some(roster_of("p"));
-        c.enriched = true;
-        c.begin_match("other", true);
-        assert!(c.roster.is_none());
-        assert!(c.cached_roster("other", true).is_none());
     }
 
     #[test]
@@ -2650,47 +2626,35 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_window_waits_for_a_retry_and_settles_on_what_arrived_at_the_last() {
+    fn a_window_yields_figures_by_what_arrived_and_whether_retries_remain() {
         let totals = played(1, 3, 12, 6);
-        // Retries remain: no figures, so the retry refetches only the failed ids.
-        assert_eq!(window_yield(&totals, 2, true, false, false), WindowYield::Missing);
-        // Budget spent: the matches that arrived are shown, but not kept for the session.
-        assert_eq!(
-            window_yield(&totals, 2, true, false, true),
-            WindowYield::Partial(RecentStats {
-                headshot_percent: Some(25),
-                kd: Some(2.0),
-                matches: Some(2)
-            })
-        );
-        // A failure alongside an unprocessed id settles the same way.
-        assert_eq!(window_yield(&totals, 2, true, true, false), WindowYield::Missing);
-        assert!(matches!(window_yield(&totals, 2, true, true, true), WindowYield::Partial(_)));
-    }
-
-    #[test]
-    fn a_window_where_nothing_arrived_stays_without_figures() {
         let none = MatchTotals::default();
-        assert_eq!(window_yield(&none, 0, true, false, false), WindowYield::Missing);
-        assert_eq!(window_yield(&none, 0, true, false, true), WindowYield::Missing);
-        assert_eq!(window_yield(&none, 0, true, true, true), WindowYield::Missing);
-    }
-
-    #[test]
-    fn a_full_window_is_kept_for_the_session() {
-        let totals = played(1, 3, 12, 6);
-        let expected =
+        let partial =
+            WindowYield::Partial(RecentStats { headshot_percent: Some(25), kd: Some(2.0), matches: Some(2) });
+        let full =
             WindowYield::Full(RecentStats { headshot_percent: Some(25), kd: Some(2.0), matches: Some(5) });
-        assert_eq!(window_yield(&totals, 5, false, false, false), expected);
-        assert_eq!(window_yield(&totals, 5, false, false, true), expected);
-    }
-
-    #[test]
-    fn only_the_pass_that_would_spend_the_budget_is_the_last_attempt() {
-        for attempts in 0..MAX_PHASE2_ATTEMPTS - 1 {
-            assert!(!enrichment_is_final(false, attempts + 1), "attempts {attempts}");
+        for (totals, arrived, any_failed, any_unprocessed, last_attempt, expected) in [
+            // Retries remain: no figures, so the retry refetches only the failed ids.
+            (totals, 2, true, false, false, WindowYield::Missing),
+            // Budget spent: the matches that arrived are shown, but not kept for the session.
+            (totals, 2, true, false, true, partial),
+            // A failure alongside an unprocessed id settles the same way.
+            (totals, 2, true, true, false, WindowYield::Missing),
+            (totals, 2, true, true, true, partial),
+            // Nothing arrived: no figures, whatever the budget.
+            (none, 0, true, false, false, WindowYield::Missing),
+            (none, 0, true, false, true, WindowYield::Missing),
+            (none, 0, true, true, true, WindowYield::Missing),
+            // A full window is kept for the session.
+            (totals, 5, false, false, false, full),
+            (totals, 5, false, false, true, full),
+        ] {
+            assert_eq!(
+                window_yield(&totals, arrived, any_failed, any_unprocessed, last_attempt),
+                expected,
+                "arrived {arrived} failed={any_failed} unprocessed={any_unprocessed} last={last_attempt}"
+            );
         }
-        assert!(enrichment_is_final(false, MAX_PHASE2_ATTEMPTS - 1 + 1));
     }
 
     #[test]
@@ -2809,14 +2773,14 @@ mod tests {
         assert!(!gate.take(false), "the forced emit restarted the window");
     }
 
-    #[test]
-    fn an_enriched_snapshot_never_carries_a_pending_row() {
-        // The contract's invariant, at its worst case: nothing has been fetched at all.
+    /// Runs `test` against the parts of an ingame snapshot for a one-player roster where
+    /// nothing has been fetched yet.
+    fn with_bare_ingame_parts(test: impl FnOnce(&SnapshotParts<'_>)) {
         let roster = roster_of("me");
         let parties = HashMap::new();
         let static_data = StaticData::default();
         let seasons: Vec<content::Season> = Vec::new();
-        let parts = SnapshotParts {
+        test(&SnapshotParts {
             players: &roster.players,
             parties: &parties,
             own_team: roster.own_team.clone(),
@@ -2828,67 +2792,59 @@ mod tests {
             season_id: "s1",
             seasons: &seasons,
             ingame: true,
-        };
-        let cache = MatchCache::default();
+        });
+    }
 
-        let settled = assemble_snapshot(&parts, &cache, false, true);
-        assert!(settled.enriched);
-        assert!(settled
-            .players
-            .iter()
-            .all(|r| r.pending == crate::riot::types::PendingStats::default()));
+    #[test]
+    fn an_enriched_snapshot_never_carries_a_pending_row() {
+        // The contract's invariant, at its worst case: nothing has been fetched at all.
+        with_bare_ingame_parts(|parts| {
+            let cache = MatchCache::default();
 
-        // The same cache mid-build says every group is still coming.
-        let in_flight = assemble_snapshot(&parts, &cache, false, false);
-        assert!(!in_flight.enriched);
-        assert!(in_flight
-            .players
-            .iter()
-            .all(|r| r.pending.rank && r.pending.skins));
+            let settled = assemble_snapshot(parts, &cache, false, true);
+            assert!(settled.enriched);
+            assert!(settled
+                .players
+                .iter()
+                .all(|r| r.pending == crate::riot::types::PendingStats::default()));
+
+            // The same cache mid-build says every group is still coming.
+            let in_flight = assemble_snapshot(parts, &cache, false, false);
+            assert!(!in_flight.enriched);
+            assert!(in_flight
+                .players
+                .iter()
+                .all(|r| r.pending.rank && r.pending.skins));
+        });
     }
 
     #[test]
     fn giving_up_settles_a_table_that_was_still_loading() {
-        let roster = roster_of("me");
-        let parties = HashMap::new();
-        let static_data = StaticData::default();
-        let seasons: Vec<content::Season> = Vec::new();
-        let parts = SnapshotParts {
-            players: &roster.players,
-            parties: &parties,
-            own_team: roster.own_team.clone(),
-            map: None,
-            mode: None,
-            status: AppStatus::Ingame,
-            static_data: &static_data,
-            own_puuid: "me",
-            season_id: "s1",
-            seasons: &seasons,
-            ingame: true,
-        };
-        let cache = MatchCache::default();
+        with_bare_ingame_parts(|parts| {
+            let cache = MatchCache::default();
 
-        // What the retry schedule gives up on: the last progress snapshot of a failed build.
-        let mut snap = assemble_snapshot(&parts, &cache, false, false);
-        assert!(snap
-            .players
-            .iter()
-            .any(|r| r.pending != PendingStats::default()));
+            // What the retry schedule gives up on: the last progress snapshot of a failed build.
+            let mut snap = assemble_snapshot(parts, &cache, false, false);
+            assert!(snap
+                .players
+                .iter()
+                .any(|r| r.pending != PendingStats::default()));
 
-        assert!(settle_pending(&mut snap));
-        assert!(snap.enriched);
-        assert!(snap
-            .players
-            .iter()
-            .all(|r| r.pending == PendingStats::default()));
-        // ...and it says exactly what the build would have published had it reached the end.
-        assert!(same_content(
-            &snap,
-            &assemble_snapshot(&parts, &cache, false, true)
-        ));
+            assert!(settle_pending(&mut snap));
+            assert!(snap.enriched);
+            assert!(snap
+                .players
+                .iter()
+                .all(|r| r.pending == PendingStats::default()));
+            // ...and it says exactly what the build would have published had it reached the end.
+            assert!(same_content(
+                &snap,
+                &assemble_snapshot(parts, &cache, false, true)
+            ));
 
-        // An already-settled table changes nothing, so no redundant emit goes out.
-        assert!(!settle_pending(&mut snap));
+            // An already-settled table changes nothing, so no redundant emit goes out.
+            assert!(!settle_pending(&mut snap));
+        });
     }
 
     #[test]
@@ -2934,24 +2890,5 @@ mod tests {
         menus.status = AppStatus::Menus;
         publish(&state, &emitter, menus);
         assert!(state.diagnostics.lock().unwrap().status_since > started);
-    }
-
-    #[test]
-    fn a_lockfile_read_is_recorded() {
-        use crate::diagnostics::LockfileState;
-
-        let state = TrackerState::default();
-        {
-            let diagnostics = state.diagnostics.lock().unwrap();
-            assert!(matches!(diagnostics.lockfile, LockfileState::Unchecked));
-            assert!(diagnostics.lockfile_at.is_none());
-        }
-
-        // No Riot Client on a test host, so this is the failing read — which is exactly the
-        // one a bug report needs recorded.
-        state.with_diagnostics(|d| d.record_lockfile(&lockfile::read()));
-        let diagnostics = state.diagnostics.lock().unwrap();
-        assert!(!matches!(diagnostics.lockfile, LockfileState::Unchecked));
-        assert!(diagnostics.lockfile_at.is_some());
     }
 }

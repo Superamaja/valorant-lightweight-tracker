@@ -182,32 +182,22 @@ mod tests {
     }
 
     #[test]
-    fn act_label_uses_episode_era_prefix() {
+    fn act_label_resolves_an_act_id_to_its_episode_and_act() {
         let seasons = season_history();
-        assert_eq!(act_label(&seasons, "e6a3").as_deref(), Some("E6: A3"));
-        assert_eq!(act_label(&seasons, "e6a1").as_deref(), Some("E6: A1"));
-    }
-
-    #[test]
-    fn act_label_keeps_v_era_identifier_as_the_prefix() {
-        // The V-era "episode" name is already a letter+digit id, so it is used verbatim
-        // instead of being prefixed with "E".
-        assert_eq!(act_label(&season_history(), "v26a1").as_deref(), Some("V26: A1"));
-    }
-
-    #[test]
-    fn act_label_resolves_the_newest_act_with_no_episode_after_it() {
-        assert_eq!(act_label(&season_history(), "v26a2").as_deref(), Some("V26: A2"));
-    }
-
-    #[test]
-    fn act_label_matches_id_case_insensitively() {
-        assert_eq!(act_label(&season_history(), "E6A3").as_deref(), Some("E6: A3"));
-    }
-
-    #[test]
-    fn act_label_is_none_for_unknown_id() {
-        assert_eq!(act_label(&season_history(), "not-a-season"), None);
+        for (id, expected) in [
+            ("e6a3", Some("E6: A3")),
+            ("e6a1", Some("E6: A1")),
+            // The V-era "episode" name is already a letter+digit id, so it is used verbatim
+            // instead of being prefixed with "E".
+            ("v26a1", Some("V26: A1")),
+            // The newest act, with no episode after it.
+            ("v26a2", Some("V26: A2")),
+            // Ids match case-insensitively.
+            ("E6A3", Some("E6: A3")),
+            ("not-a-season", None),
+        ] {
+            assert_eq!(act_label(&seasons, id).as_deref(), expected, "{id}");
+        }
         assert_eq!(act_label(&[], "e6a3"), None);
     }
 
