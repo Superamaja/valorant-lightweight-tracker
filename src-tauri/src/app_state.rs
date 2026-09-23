@@ -496,7 +496,7 @@ impl MatchCache {
     fn is_fresh_for(&self, match_id: &str, ingame: bool) -> bool {
         self.match_id.as_deref() == Some(match_id)
             && self.enriched
-            && !(ingame && !self.ingame)
+            && (!ingame || self.ingame)
     }
 
     /// The roster to render `match_id` from without fetching the match payload at all: only
