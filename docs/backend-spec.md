@@ -514,6 +514,14 @@ serde camelCase names are in `docs/ipc-contract.md`.
   since both figures come out of one download. `PlayerRow.kd: Option<f64>` — the float is why
   `PlayerRow`/`TrackerSnapshot` derive `PartialEq` but no longer `Eq`; snapshot dedup only ever
   used `PartialEq`, and the value is a finite ratio.
+- **Partial HS%/KD windows** — a match-details `404` (`Error::ResourceNotFound`) means Riot
+  has not processed that match yet (typically the one that just ended, on a quick re-queue):
+  the id is skipped for every window in the pass, not cached and not counted as a failure, and
+  HS%/KD come from the remaining matches. Other match-details errors keep the bounded retry;
+  on the last allowed attempt (`MAX_PHASE2_ATTEMPTS`) a window that still has failed ids shows
+  the figures from the matches that arrived (nothing arrived -> no entry, N/A). A partial window
+  of either kind is never written to `RecentStatsCache`, so the next lobby recomputes it; the
+  per-match cache means only the missing ids cost a request.
 - **Vandal + Phantom skins** — `GET /core-game/v1/matches/{id}/loadouts`, 1 request/match,
   **INGAME only** (pregame/menus → `null`). Path `Loadouts[].Loadout.Items["<weapon
   uuid>"].Sockets["bcef87d6-…"].Item.ID` → skin uuid → `/v1/weapons/skins` cache for name +

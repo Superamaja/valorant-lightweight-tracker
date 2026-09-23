@@ -235,6 +235,16 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    - **Still to live-verify on Windows**: clipboard write from a real release exe
      (WebView2), the `tauri::webview_version()` line, the Windows build line, and a real
      report from the affected user. `pnpm build` + browser mode verified here.
+11h. **Stats-accuracy batch (2026-09-23).** HS%/KD N/A on the self row after a quick
+   re-queue, fixed (`fix(backend)`, Codex-reviewed clean). One failed match-details call
+   blanked the whole 5-match window, and the 1 s/2 s retry budget settled it as N/A. Now a
+   404 ("not processed yet") match is skipped, the last attempt settles on what arrived,
+   and partial windows never enter the session cache. In the same batch: real match
+   outcomes plus `Draw` for the last-5 pips (read from match-details), a per-row
+   matches-used count with dimmed HS%/KD when it is under 5, and custom tooltips replacing
+   native `title`. Then release v0.1.4.
+   - Lesson: never ask an agent to make `cargo fmt --check` pass. The repo is not
+     rustfmt-clean (roadmap). Git Bash `sed -i` also strips CRLF from `app_state.rs`.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,

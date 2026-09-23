@@ -613,21 +613,27 @@ enum WindowStep {
     /// whole lobby; the window is simply left incomplete, which is what keeps the pass
     /// non-final so a later pass can try the id again.
     Failed,
+    /// Riot answered "not found" for it earlier in this pass: typically the match that just
+    /// ended, whose details are not processed yet. It is left out of the window rather than
+    /// retried, so the player's figures come from the matches that do exist.
+    Unprocessed,
     /// Not seen yet — download it.
     Fetch,
 }
 
 /// Decide how to serve `match_id` for `puuid` this pass, from the session cache and the ids
-/// that have already failed in it. Pure.
+/// that have already failed or been found unprocessed in it. Pure.
 fn window_step(
     cache: &MatchDetailsCache,
     failed: &HashSet<String>,
+    unprocessed: &HashSet<String>,
     match_id: &str,
     puuid: &str,
 ) -> WindowStep {
     match cache.totals_for(match_id, puuid) {
         Some(totals) => WindowStep::Cached(totals),
         None if failed.contains(match_id) => WindowStep::Failed,
+        None if unprocessed.contains(match_id) => WindowStep::Unprocessed,
         None => WindowStep::Fetch,
     }
 }
@@ -637,8 +643,12 @@ fn window_step(
 struct WindowPlan {
     /// The totals the already-parsed matches of the window contribute.
     cached: MatchTotals,
+    /// How many of its matches are already parsed.
+    arrived: usize,
     /// Whether any of its matches is already known to be unavailable this pass.
     any_failed: bool,
+    /// Whether any of its matches is already known to be unprocessed this pass.
+    any_unprocessed: bool,
     /// The ids still to download, each listed once.
     to_fetch: Vec<String>,
 }
@@ -649,14 +659,19 @@ struct WindowPlan {
 fn plan_window(
     cache: &MatchDetailsCache,
     failed: &HashSet<String>,
+    unprocessed: &HashSet<String>,
     match_ids: &[String],
     puuid: &str,
 ) -> WindowPlan {
     let mut plan = WindowPlan::default();
     for match_id in match_ids {
-        match window_step(cache, failed, match_id, puuid) {
-            WindowStep::Cached(totals) => plan.cached.add(totals),
+        match window_step(cache, failed, unprocessed, match_id, puuid) {
+            WindowStep::Cached(totals) => {
+                plan.cached.add(totals);
+                plan.arrived += 1;
+            }
             WindowStep::Failed => plan.any_failed = true,
+            WindowStep::Unprocessed => plan.any_unprocessed = true,
             WindowStep::Fetch => {
                 if !plan.to_fetch.iter().any(|held| held == match_id) {
                     plan.to_fetch.push(match_id.clone());
@@ -665,6 +680,40 @@ fn plan_window(
         }
     }
     plan
+}
+
+/// What a player's resolved HS%/KD window settles to this pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WindowYield {
+    /// Every match arrived: the figures are final for the player's newest match and may be
+    /// kept for the session.
+    Full(RecentStats),
+    /// Some matches are missing for good this pass (unprocessed, or still failing on the last
+    /// allowed attempt): the figures from the ones that arrived stand for this lobby only, so
+    /// the next lobby recomputes them.
+    Partial(RecentStats),
+    /// Matches failed and a later attempt may still fetch them, or nothing arrived at all: no
+    /// figures yet.
+    Missing,
+}
+
+/// Settle a window from what arrived. A failure withholds the figures while retries remain,
+/// since a window missing some of its matches is not the one the column describes; once the
+/// retry budget is spent, whatever arrived is shown rather than nothing. Pure.
+fn window_yield(
+    totals: &MatchTotals,
+    arrived: usize,
+    any_failed: bool,
+    any_unprocessed: bool,
+    last_attempt: bool,
+) -> WindowYield {
+    if any_failed && (!last_attempt || arrived == 0) {
+        WindowYield::Missing
+    } else if any_failed || any_unprocessed {
+        WindowYield::Partial(totals.recent_stats())
+    } else {
+        WindowYield::Full(totals.recent_stats())
+    }
 }
 
 /// How many parsed matches the session keeps. One full lobby's HS%/KD window spans at most
@@ -1857,6 +1906,12 @@ async fn fetch_phase2(
     // Match ids that failed this pass. Lobby players share recent matches, so without this a
     // single dead id would be retried once per player, every pass.
     let mut failed_matches: HashSet<String> = HashSet::new();
+    // Match ids Riot has not processed yet (404) this pass, left out of every window they
+    // appear in instead of being requested once per player.
+    let mut unprocessed_matches: HashSet<String> = HashSet::new();
+    // Whether a failure this pass would spend the lobby's last retry: windows then settle on
+    // whatever arrived.
+    let last_attempt = enrichment_is_final(false, cache.phase2_attempts + 1);
 
     // competitiveupdates: one request per player missing history.
     let missing_updates: Vec<String> = puuids
@@ -1926,9 +1981,12 @@ async fn fetch_phase2(
             .get(puuid)
             .map(|h| h.recent_match_ids.clone())
             .unwrap_or_default();
-        let plan = plan_window(match_details, &failed_matches, &match_ids, puuid);
+        let plan =
+            plan_window(match_details, &failed_matches, &unprocessed_matches, &match_ids, puuid);
         let mut acc = plan.cached;
+        let mut arrived = plan.arrived;
         let mut any_failed = plan.any_failed;
+        let mut any_unprocessed = plan.any_unprocessed;
         for batch in plan.to_fetch.chunks(MATCH_DETAILS_CONCURRENCY) {
             if drain_pokes(progress.ctx.rx) {
                 return Ok(Phase2Outcome::Interrupted);
@@ -1949,8 +2007,13 @@ async fn fetch_phase2(
                         let contribution = stats::match_contribution(&v);
                         acc.add(contribution.get(puuid).copied().unwrap_or_default());
                         match_details.put(mid, contribution);
+                        arrived += 1;
                     }
                     Err(Error::BadClaims) => return Err(Error::BadClaims),
+                    Err(Error::ResourceNotFound) => {
+                        any_unprocessed = true;
+                        unprocessed_matches.insert(mid.clone());
+                    }
                     Err(_) => {
                         any_failed = true;
                         failed_matches.insert(mid.clone());
@@ -1958,16 +2021,24 @@ async fn fetch_phase2(
                 }
             }
         }
-        if any_failed {
-            // A window missing some of its matches yields the WRONG HS%/KD, so neither figure
-            // is cached for this player (the session entry would otherwise stay wrong until
-            // their next competitive match). The matches that DID arrive stay in
-            // `match_details`, so the retry only refetches the ones that failed.
-            partial = true;
-            continue;
-        }
-        let recent = acc.recent_stats();
-        recent_stats_cache.put(puuid, &newest, recent);
+        // Only a full window is kept for the session: a partial one would otherwise stay
+        // until the player's next competitive match. The matches that DID arrive stay in
+        // `match_details`, so a retry or the next lobby refetches only the missing ids.
+        let recent = match window_yield(&acc, arrived, any_failed, any_unprocessed, last_attempt)
+        {
+            WindowYield::Missing => {
+                partial = true;
+                continue;
+            }
+            WindowYield::Partial(recent) => {
+                partial |= any_failed;
+                recent
+            }
+            WindowYield::Full(recent) => {
+                recent_stats_cache.put(puuid, &newest, recent);
+                recent
+            }
+        };
         cache.recent_stats.insert(puuid.clone(), recent);
         progress.publish_progress(cache, false);
     }
@@ -2452,19 +2523,19 @@ mod tests {
         let mut failed = HashSet::new();
 
         // Untouched so far -> download it.
-        assert_eq!(window_step(&cache, &failed, "m1", "a"), WindowStep::Fetch);
+        assert_eq!(window_step(&cache, &failed, &HashSet::new(), "m1", "a"), WindowStep::Fetch);
 
         // It failed for the first player, so every other player who played it takes the
         // no-data path instead of spending a request of their own on the same dead id.
         failed.insert("m1".to_string());
-        assert_eq!(window_step(&cache, &failed, "m1", "b"), WindowStep::Failed);
+        assert_eq!(window_step(&cache, &failed, &HashSet::new(), "m1", "b"), WindowStep::Failed);
         // A different id in the same pass is unaffected.
-        assert_eq!(window_step(&cache, &failed, "m2", "b"), WindowStep::Fetch);
+        assert_eq!(window_step(&cache, &failed, &HashSet::new(), "m2", "b"), WindowStep::Fetch);
 
         // A cached match always wins: a later pass that succeeds serves everyone.
         cache.put("m1", MatchContribution::new());
         assert_eq!(
-            window_step(&cache, &failed, "m1", "b"),
+            window_step(&cache, &failed, &HashSet::new(), "m1", "b"),
             WindowStep::Cached(MatchTotals::default())
         );
     }
@@ -2480,7 +2551,8 @@ mod tests {
         let mut failed = HashSet::new();
         failed.insert("m2".to_string());
 
-        let plan = plan_window(&cache, &failed, &ids(&["m1", "m2", "m3", "m4"]), "a");
+        let plan =
+            plan_window(&cache, &failed, &HashSet::new(), &ids(&["m1", "m2", "m3", "m4"]), "a");
         assert_eq!(plan.cached.kills, 20);
         assert!(plan.any_failed, "a dead id leaves the window incomplete");
         assert_eq!(plan.to_fetch, ids(&["m3", "m4"]));
@@ -2493,10 +2565,88 @@ mod tests {
         let plan = plan_window(
             &MatchDetailsCache::default(),
             &HashSet::new(),
+            &HashSet::new(),
             &["m1".to_string(), "m1".to_string(), "m2".to_string()],
             "a",
         );
         assert_eq!(plan.to_fetch, vec!["m1".to_string(), "m2".to_string()]);
+    }
+
+    fn played(head: u64, body: u64, kills: u64, deaths: u64) -> MatchTotals {
+        MatchTotals { head, body, kills, deaths, kd_matches: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn an_unprocessed_match_is_left_out_and_the_rest_still_count() {
+        let ids = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut cache = MatchDetailsCache::default();
+        for (id, totals) in [("m2", played(2, 8, 20, 10)), ("m3", played(3, 7, 10, 10))] {
+            cache.put(id, MatchContribution::from([("a".to_string(), totals)]));
+        }
+        let mut unprocessed = HashSet::new();
+        unprocessed.insert("m1".to_string());
+
+        // The just-ended match is neither refetched for another player nor a failure...
+        assert_eq!(
+            window_step(&cache, &HashSet::new(), &unprocessed, "m1", "b"),
+            WindowStep::Unprocessed
+        );
+        let plan =
+            plan_window(&cache, &HashSet::new(), &unprocessed, &ids(&["m1", "m2", "m3"]), "a");
+        assert!(plan.to_fetch.is_empty());
+        assert!(!plan.any_failed);
+        assert!(plan.any_unprocessed);
+        assert_eq!(plan.arrived, 2);
+
+        // ...so the figures come from the other two, on every attempt, and are not kept for
+        // the session (the next lobby recomputes once the match is processed).
+        let expected = RecentStats { headshot_percent: Some(25), kd: Some(1.5) };
+        for last_attempt in [false, true] {
+            assert_eq!(
+                window_yield(&plan.cached, plan.arrived, false, true, last_attempt),
+                WindowYield::Partial(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_window_waits_for_a_retry_and_settles_on_what_arrived_at_the_last() {
+        let totals = played(1, 3, 12, 6);
+        // Retries remain: no figures, so the retry refetches only the failed ids.
+        assert_eq!(window_yield(&totals, 2, true, false, false), WindowYield::Missing);
+        // Budget spent: the matches that arrived are shown, but not kept for the session.
+        assert_eq!(
+            window_yield(&totals, 2, true, false, true),
+            WindowYield::Partial(RecentStats { headshot_percent: Some(25), kd: Some(2.0) })
+        );
+        // A failure alongside an unprocessed id settles the same way.
+        assert_eq!(window_yield(&totals, 2, true, true, false), WindowYield::Missing);
+        assert!(matches!(window_yield(&totals, 2, true, true, true), WindowYield::Partial(_)));
+    }
+
+    #[test]
+    fn a_window_where_nothing_arrived_stays_without_figures() {
+        let none = MatchTotals::default();
+        assert_eq!(window_yield(&none, 0, true, false, false), WindowYield::Missing);
+        assert_eq!(window_yield(&none, 0, true, false, true), WindowYield::Missing);
+        assert_eq!(window_yield(&none, 0, true, true, true), WindowYield::Missing);
+    }
+
+    #[test]
+    fn a_full_window_is_kept_for_the_session() {
+        let totals = played(1, 3, 12, 6);
+        let expected =
+            WindowYield::Full(RecentStats { headshot_percent: Some(25), kd: Some(2.0) });
+        assert_eq!(window_yield(&totals, 5, false, false, false), expected);
+        assert_eq!(window_yield(&totals, 5, false, false, true), expected);
+    }
+
+    #[test]
+    fn only_the_pass_that_would_spend_the_budget_is_the_last_attempt() {
+        for attempts in 0..MAX_PHASE2_ATTEMPTS - 1 {
+            assert!(!enrichment_is_final(false, attempts + 1), "attempts {attempts}");
+        }
+        assert!(enrichment_is_final(false, MAX_PHASE2_ATTEMPTS - 1 + 1));
     }
 
     #[test]

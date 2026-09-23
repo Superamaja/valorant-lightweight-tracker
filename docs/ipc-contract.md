@@ -335,7 +335,9 @@ interface RankInfo {
   not a loss). `[]` when the player has no recent competitive matches.
 - **`headshotPercent`** is an integer 0–100 computed over the last few competitive matches
   (`headshots / (headshots + bodyshots + legshots)`, matching vRY). `null` when the player
-  has no recent matches (render "N/a").
+  has no recent matches (render "N/a"). When some of those matches cannot be fetched (the
+  match that just ended is often not processed yet), both it and `kd` cover the ones that
+  could, and `null` only when none could.
 - **`kd`** is total kills / total deaths across the **same** recent competitive matches HS% is
   computed from — it rides those already-downloaded match-details payloads and costs **zero
   extra requests**. Rounded to 2 decimals (e.g. `1.28`); a window with 0 deaths yields the kill
