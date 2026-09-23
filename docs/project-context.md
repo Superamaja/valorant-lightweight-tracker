@@ -312,7 +312,7 @@ Scaffolded with `pnpm create tauri-app` (react-ts template), files at the repo r
             ├── rank.rs        # MMR parse, current/peak rank, before-ascendant tier shift, win rate
             ├── stats.rs       # phase 2: competitiveupdates (ΔRR + last-5) + match-details HS% math
             ├── loadout.rs     # phase 2: coregame loadouts -> Vandal/Phantom skin ids
-            ├── content.rs     # content-service season list (current/previous act)
+            ├── content.rs     # content-service season list (current act, act labels)
             ├── static_data.rs # valorant-api fetch + version-keyed disk cache + lookups (+ skins)
             └── assemble.rs    # display-ready PlayerRows (privacy, stats, guaranteed row order)
 ```

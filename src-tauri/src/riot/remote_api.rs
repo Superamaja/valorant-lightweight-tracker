@@ -236,7 +236,6 @@ pub fn map_body_error(status: u16, body: Value) -> Result<Value> {
     }
     match status {
         404 => Err(Error::ResourceNotFound),
-        429 => Err(Error::RateLimited(None)),
         // Spec §10.3: a stale bearer/entitlements pair is what 401/403 actually mean, so they
         // become the token-refresh signal instead of a generic transport error — the caller's
         // single refresh-and-retry arm then covers them.

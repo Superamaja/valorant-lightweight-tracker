@@ -28,6 +28,7 @@ Later work, in rough order. Items move out of here and into project-context.md w
 - **Header score display** — live round score is already in the data we fetch: own presence `partyOwnerMatchScoreAllyTeam` / `partyOwnerMatchScoreEnemyTeam`. Nearly free to expose in the snapshot + header.
 - **Discord RPC** — architecture seam exists; not built (user decision).
 - **`rustfmt.toml` guard** — the repo is deliberately not rustfmt-clean (wider hand-maintained style); a stray `cargo fmt` once reformatted 16 files and had to be hand-reverted. Add a `rustfmt.toml` matching the house style (or an explicit "do not run cargo fmt" note) so it cannot happen again.
+- **Test coverage gaps** — found in the 2026-09-23 test audit: `Lockfile::parse` has no malformed-pid case; `PresenceInfo::is_custom_game` has no negative case; `RawPresence::is_valorant` branches are untested (League without `championId`, `product == "valorant"` alone, an unknown product with private data).
 - **vRY upstream check** — user-triggered every few weeks; procedure + last-checked hash live in docs/maintenance.md.
 
 ## Rejected

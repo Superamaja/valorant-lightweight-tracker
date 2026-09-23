@@ -1,4 +1,4 @@
-//! Content-service season list parsing: current + previous act season ids. See spec §7.
+//! Content-service season list parsing: current act season id and act labels. See spec §7.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -37,18 +37,6 @@ pub fn current_season_id(seasons: &[Season]) -> Option<String> {
     seasons
         .iter()
         .find(|s| s.season_type == "act" && s.is_active)
-        .map(|s| s.id.clone())
-}
-
-/// Previous season id = the `act` whose EndTime == current act's StartTime.
-/// Not used by the peak-rank act label (that resolves the peak's own season); kept as the
-/// vRY-parity hook for a future "previous act rank" column.
-#[allow(dead_code)]
-pub fn previous_season_id(seasons: &[Season]) -> Option<String> {
-    let current = seasons.iter().find(|s| s.season_type == "act" && s.is_active)?;
-    seasons
-        .iter()
-        .find(|s| s.season_type == "act" && !s.start_time.is_empty() && s.end_time == current.start_time)
         .map(|s| s.id.clone())
 }
 
@@ -162,12 +150,6 @@ mod tests {
         assert_eq!(current_season_id(&seasons).as_deref(), Some("act-cur"));
     }
 
-    #[test]
-    fn finds_previous_act_by_end_time() {
-        let seasons = parse_seasons(&fixture());
-        assert_eq!(previous_season_id(&seasons).as_deref(), Some("act-prev"));
-    }
-
     /// Shaped like the real content-service list: each episode entry followed by its acts,
     /// including the V-era naming where the "episode" carries the letter+digit id.
     fn season_history() -> Vec<Season> {
@@ -207,6 +189,5 @@ mod tests {
             { "ID": "a", "Type": "act", "IsActive": false, "StartTime": "x", "EndTime": "y" }
         ]}));
         assert_eq!(current_season_id(&seasons), None);
-        assert_eq!(previous_season_id(&seasons), None);
     }
 }
