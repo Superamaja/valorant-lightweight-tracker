@@ -185,12 +185,13 @@ const rawRegion = regionLocale?.region;
 let state = { menus: "menus", pregame: "pregame", ingame: "ingame" }[String(presenceState).toLowerCase()];
 let matchSource = null;
 let currentMatchId = null;
+let pods = null;
 
 if (!entitlements || !rawRegion) {
   const reason = entitlements
     ? "region-locale unavailable, remote hosts unknown"
     : "entitlements unavailable, no puuid or tokens";
-  for (const name of ["pregame", "coregame", "party", "mmr", "competitive-updates", "match-details"]) {
+  for (const name of ["pregame", "coregame", "party", "pods", "mmr", "competitive-updates", "match-details"]) {
     skip(`${name}.json`, name, reason);
   }
 } else {
@@ -257,6 +258,8 @@ if (!entitlements || !rawRegion) {
   } else {
     skip("party.json", "glz /parties/v1/parties/{id}", "no current party id");
   }
+  // Every game pod the region offers, keyed by pod id: the source of the server-label tokens.
+  pods = await remote("pods.json", glz, "/parties/v1/parties/customgameconfigs");
 
   await remote("mmr.json", pd, `/mmr/v1/players/${puuid}`);
   const updates = await remote(
@@ -326,11 +329,15 @@ const mode = {
   partyState: dual(ownPresence, "partyPresenceData", "partyState"),
   modeId: m.ModeID ?? m.Mode,
   mapId: m.MapID,
+  gamePodId: m.GamePodID,
 };
 console.log("detected:");
 for (const [key, value] of Object.entries(mode)) {
   console.log(`  ${key.padEnd(17)} ${value === "" ? "(empty)" : (value ?? "-")}`);
 }
+const podIds = Object.keys(pods?.GamePodPingServiceInfo ?? {});
+console.log(`  ${"gamePods".padEnd(17)} ${podIds.length || "-"}`);
+for (const id of podIds) console.log(`    ${id}`);
 
 if (!entitlements) {
   fail("the local client did not return entitlements yet (still starting?); try again shortly");

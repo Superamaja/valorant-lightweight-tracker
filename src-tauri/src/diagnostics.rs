@@ -621,6 +621,8 @@ mod tests {
             status: AppStatus::Menus,
             map: None,
             mode: None,
+            server: None,
+            region: None,
             own_team: None,
             players: Vec::new(),
             enriched: true,

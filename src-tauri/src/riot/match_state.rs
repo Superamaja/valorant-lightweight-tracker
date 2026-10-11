@@ -23,6 +23,8 @@ pub struct MatchPlayer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoregameData {
     pub map_id: Option<String>,
+    /// Raw `GamePodID` (the game server), e.g. `aresriot.aws-usw1-prod.na-gp-norcal-1`.
+    pub game_pod_id: Option<String>,
     pub players: Vec<MatchPlayer>,
     /// The local player's team id (the team `own_puuid` is on).
     pub own_team: Option<String>,
@@ -32,6 +34,8 @@ pub struct CoregameData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PregameData {
     pub map_id: Option<String>,
+    /// Raw `GamePodID`, when agent select already carries one.
+    pub game_pod_id: Option<String>,
     pub players: Vec<MatchPlayer>,
     pub own_team: Option<String>,
 }
@@ -132,6 +136,8 @@ pub fn extract_match_id(value: &Value) -> Option<String> {
 struct CoregameWire {
     #[serde(rename = "MapID", default)]
     map_id: String,
+    #[serde(rename = "GamePodID", default)]
+    game_pod_id: String,
     #[serde(rename = "Players", default)]
     players: Vec<PlayerWire>,
 }
@@ -157,6 +163,7 @@ pub fn extract_coregame(value: Value, own_puuid: &str) -> Result<CoregameData> {
         .map(|p| p.team.clone());
     Ok(CoregameData {
         map_id: none_if_empty(wire.map_id),
+        game_pod_id: none_if_empty(wire.game_pod_id),
         players,
         own_team,
     })
@@ -176,6 +183,8 @@ struct PregameTeamWire {
 struct PregameWire {
     #[serde(rename = "MapID", default)]
     map_id: String,
+    #[serde(rename = "GamePodID", default)]
+    game_pod_id: String,
     #[serde(rename = "AllyTeam", default)]
     ally_team: Option<PregameTeamWire>,
     #[serde(rename = "Teams", default)]
@@ -233,6 +242,7 @@ pub fn extract_pregame(value: Value, own_puuid: &str) -> Result<PregameData> {
 
     Ok(PregameData {
         map_id: none_if_empty(wire.map_id),
+        game_pod_id: none_if_empty(wire.game_pod_id),
         players,
         own_team,
     })
@@ -262,6 +272,7 @@ mod tests {
     fn coregame_full_roster_and_own_team() {
         let payload = json!({
             "MapID": "/Game/Maps/Ascent/Ascent",
+            "GamePodID": "aresriot.aws-usw1-prod.na-gp-norcal-1",
             "Players": [
                 { "Subject": "me", "TeamID": "Blue", "CharacterID": "ADD6443A-41BD-E414-F6AD-E58D267F4E95",
                   "PlayerIdentity": { "AccountLevel": 150, "Incognito": false, "HideAccountLevel": false } },
@@ -271,6 +282,7 @@ mod tests {
         });
         let data = extract_coregame(payload, "me").unwrap();
         assert_eq!(data.map_id.as_deref(), Some("/Game/Maps/Ascent/Ascent"));
+        assert_eq!(data.game_pod_id.as_deref(), Some("aresriot.aws-usw1-prod.na-gp-norcal-1"));
         assert_eq!(data.own_team.as_deref(), Some("Blue"));
         assert_eq!(data.players.len(), 2);
         // CharacterID lowercased.
@@ -311,6 +323,7 @@ mod tests {
         });
         let data = extract_pregame(payload, "me").unwrap();
         assert_eq!(data.own_team.as_deref(), Some("Blue"));
+        assert_eq!(data.game_pod_id, None, "no GamePodID on the wire");
         assert_eq!(data.players.len(), 2);
         // unselected agent -> None, selection state None (empty)
         assert_eq!(data.players[0].character_id, None);

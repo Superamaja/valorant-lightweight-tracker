@@ -144,6 +144,8 @@ makes one request per endpoint, and writes each response as pretty JSON to
   `coregame-match.json` + `coregame-loadouts.json` in game (with no readable presence state, both
   lookups are tried and the one that answers decides the state);
 - `party-player.json` + `party.json`, `mmr.json`, `competitive-updates.json`;
+- `pods.json`: glz `/parties/v1/parties/customgameconfigs`, every game pod the region offers
+  (its `GamePodPingServiceInfo` keys are what confirms the server-label city tokens);
 - with `--match-details`: `match-details.json` for the current match (only exists once it has
   ended), or outside a match for the last played one (`match-history.json`, any queue);
 - `manifest.json`: every request with its path, status and error, plus every endpoint skipped
@@ -151,7 +153,7 @@ makes one request per endpoint, and writes each response as pretty JSON to
 
 The console prints one line per file (ids cut to 8 characters) and then the detected
 `sessionLoopState`, `queueId`, `provisioningFlow`, `partyState`, mode id and map id, which is what
-identifies a new mode. It exits non-zero when the lockfile is missing (game not running).
+identifies a new mode, plus the match's `GamePodID` and the region's pod ids from `pods.json`. It exits non-zero when the lockfile is missing (game not running).
 
 The lockfile password and the access/entitlements tokens are never written or printed, but the
 captures hold real puuids, player names and match payloads. `captures/` is gitignored; do not

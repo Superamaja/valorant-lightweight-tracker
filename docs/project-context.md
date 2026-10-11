@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-09-04
+Last updated: 2026-10-11
 
 ## Goal
 
@@ -247,6 +247,11 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
      rustfmt-clean (roadmap). Git Bash `sed -i` also strips CRLF from `app_state.rs`.
    - Live-verify: match-details `teams[].won` / `players[].teamId` come from the techchrism
      schema. No capture confirms them yet; a missing field falls back to the RR pip.
+11i. **v0.1.5 in progress (2026-10-11).** Server label added: the header's mode line now reads
+   `<mode> · <server>` (e.g. `Gauntlet: Glitched · US West (N. California)`), parsed from the
+   match payload's `GamePodID` at zero extra requests; snapshot gained `server` + `region`
+   (`docs/ipc-contract.md`). Most city tokens are inferred, pending confirmation via
+   `pnpm snapshot`'s `pods.json` (list in `docs/data-sources.md` "Game server labels").
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,

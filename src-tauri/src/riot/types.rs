@@ -204,6 +204,11 @@ pub struct TrackerSnapshot {
     pub map: Option<MapInfo>,
     /// Display mode name ("Competitive", "Custom", ...), null in menus.
     pub mode: Option<String>,
+    /// Game server label from the server picker ("US West (N. California)"), null outside a
+    /// match or when the match payload carries no readable `GamePodID`.
+    pub server: Option<String>,
+    /// Upper-case region code ("NA", "EU", "AP", "KR", "LATAM", "BR"), null outside a match.
+    pub region: Option<String>,
     /// Local player's team id (null outside a match).
     pub own_team: Option<String>,
     /// Player rows (empty in menus / not-running).
@@ -227,6 +232,8 @@ impl TrackerSnapshot {
             status: AppStatus::ValorantNotRunning,
             map: None,
             mode: None,
+            server: None,
+            region: None,
             own_team: None,
             players: Vec::new(),
             enriched: true,

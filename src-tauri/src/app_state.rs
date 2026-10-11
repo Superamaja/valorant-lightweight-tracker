@@ -4,7 +4,7 @@
 
 use crate::diagnostics::{Diagnostics, PresenceDiag, SessionDiag};
 use crate::riot::assemble::{assemble_players, AssembleInput};
-use crate::riot::constants::{game_mode_name, INTER_REQUEST_DELAY_MS};
+use crate::riot::constants::{game_mode_name, game_server_name, INTER_REQUEST_DELAY_MS};
 use crate::riot::content;
 use crate::riot::error::{Error, Result};
 use crate::riot::loadout::{self, PlayerSkinIds};
@@ -141,6 +141,8 @@ fn same_content(a: &TrackerSnapshot, b: &TrackerSnapshot) -> bool {
         status,
         map,
         mode,
+        server,
+        region,
         own_team,
         players,
         enriched,
@@ -150,6 +152,8 @@ fn same_content(a: &TrackerSnapshot, b: &TrackerSnapshot) -> bool {
     *status == b.status
         && *map == b.map
         && *mode == b.mode
+        && *server == b.server
+        && *region == b.region
         && *own_team == b.own_team
         && *players == b.players
         && *enriched == b.enriched
@@ -231,6 +235,8 @@ struct SnapshotParts<'a> {
     own_team: Option<String>,
     map: Option<MapInfo>,
     mode: Option<String>,
+    server: Option<String>,
+    region: Option<String>,
     status: AppStatus,
     static_data: &'a StaticData,
     own_puuid: &'a str,
@@ -481,6 +487,7 @@ struct CachedRoster {
     players: Vec<MatchPlayer>,
     own_team: Option<String>,
     map_id: Option<String>,
+    server: Option<String>,
 }
 
 impl MatchCache {
@@ -1321,6 +1328,8 @@ async fn build_snapshot(session: &mut Session, ctx: &mut BuildCtx<'_>) -> Result
                     status: AppStatus::Menus,
                     map: None,
                     mode: None,
+                    server: None,
+                    region: None,
                     own_team: None,
                     players: Vec::new(),
                     enriched: true,
@@ -1419,6 +1428,7 @@ async fn build_match_snapshot(
     } else {
         info.queue_id.as_deref().map(game_mode_name)
     };
+    let region = Some(session.remote.hosts.region.to_ascii_uppercase());
 
     // The in-match steady state: the id above already confirmed we are still in the same
     // match, and everything the match payload would carry is fixed for its duration, so this
@@ -1430,6 +1440,8 @@ async fn build_match_snapshot(
             own_team: roster.own_team.clone(),
             map: session.static_data.map(roster.map_id.as_deref()),
             mode,
+            server: roster.server.clone(),
+            region,
             status,
             static_data: &session.static_data,
             own_puuid: &session.own_puuid,
@@ -1468,16 +1480,16 @@ async fn build_match_snapshot(
             return Err(err);
         }
     };
-    let extracted: Result<(Vec<MatchPlayer>, Option<String>, Option<String>)> = if ingame {
+    let extracted = if ingame {
         match_state::extract_coregame(match_json, &own)
-            .map(|data| (data.players, data.own_team, data.map_id))
+            .map(|data| (data.players, data.own_team, data.map_id, data.game_pod_id))
     } else {
         match_state::extract_pregame(match_json, &own)
-            .map(|data| (data.players, data.own_team, data.map_id))
+            .map(|data| (data.players, data.own_team, data.map_id, data.game_pod_id))
     };
     // A payload we can't read is an error, not an empty lobby: erroring here happens BEFORE
     // `begin_match`, so nothing is cached and the loop retries.
-    let (players, own_team, map_id) = match extracted {
+    let (players, own_team, map_id, game_pod_id) = match extracted {
         Ok(parts) => parts,
         Err(err) => {
             let what = if ingame {
@@ -1497,6 +1509,7 @@ async fn build_match_snapshot(
     }
 
     let map = session.static_data.map(map_id.as_deref());
+    let server = game_pod_id.as_deref().and_then(game_server_name);
 
     // Fully cached (enriched, correct state) -> a single snapshot, no fetch. This is the
     // common in-match path: the score changes every round but nothing here is refetched.
@@ -1507,6 +1520,8 @@ async fn build_match_snapshot(
             own_team,
             map,
             mode,
+            server,
+            region,
             status,
             static_data: &session.static_data,
             own_puuid: &session.own_puuid,
@@ -1529,6 +1544,7 @@ async fn build_match_snapshot(
             players: players.clone(),
             own_team: own_team.clone(),
             map_id,
+            server: server.clone(),
         });
     }
     let _ = refresh_tokens(session).await;
@@ -1541,6 +1557,8 @@ async fn build_match_snapshot(
         own_team,
         map,
         mode,
+        server,
+        region,
         status,
         static_data: &session.static_data,
         own_puuid: &session.own_puuid,
@@ -1655,6 +1673,8 @@ fn assemble_snapshot(
         status: parts.status,
         map: parts.map.clone(),
         mode: parts.mode.clone(),
+        server: parts.server.clone(),
+        region: parts.region.clone(),
         own_team: parts.own_team.clone(),
         players: rows,
         enriched,
@@ -2452,6 +2472,7 @@ mod tests {
             }],
             own_team: Some("Blue".into()),
             map_id: Some("/Game/Maps/Ascent/Ascent".into()),
+            server: None,
         }
     }
 
@@ -2786,6 +2807,8 @@ mod tests {
             own_team: roster.own_team.clone(),
             map: None,
             mode: None,
+            server: None,
+            region: None,
             status: AppStatus::Ingame,
             static_data: &static_data,
             own_puuid: "me",

@@ -1,6 +1,6 @@
 # IPC Contract (Rust backend ↔ React frontend)
 
-Last updated: 2026-09-03 (diagnostics: `get_diagnostics`).
+Last updated: 2026-10-11 (snapshot `server` + `region`).
 Status: backend implemented; this is the
 exact TypeScript-facing contract the UI agent builds against. Everything the frontend
 receives is already display-ready — no Riot-API-shape interpretation happens in the UI.
@@ -175,6 +175,10 @@ interface TrackerSnapshot {
   status: AppStatus;
   map: MapInfo | null;          // resolved map; null in Menus / ValorantNotRunning
   mode: string | null;          // display mode name (see below); null outside a match
+  server: string | null;        // game server label, e.g. "US West (N. California)"; null
+                                // outside a match or when the payload has no readable pod id
+  region: string | null;        // upper-case region code ("NA", "EU", "AP", "KR", "LATAM",
+                                // "BR"); null outside a match. Diagnostics/future use only
   ownTeam: string | null;       // local player's team id ("Red"|"Blue"); null outside a match
   players: PlayerRow[];         // [] in Menus / ValorantNotRunning
   enriched: boolean;            // every stat has settled. Guaranteed: true implies no row
@@ -287,6 +291,12 @@ interface RankInfo {
   `Escalation`, `Replication`, `Team Deathmatch`, `Custom`, `Snowball Fight`,
   `All Random One Site`, `Knockout`, `New Map`, `Gauntlet: Glitched`, or `Custom Game` (customs). Unknown queue ids
   pass through as their raw string.
+- **`server`** is the in-game server picker's label for the match's game pod (Riot Support
+  "Server Select" wording). A pod city the backend has no label for arrives title-cased
+  (`"Virginia"`), never raw. In Pregame it is usually `null` (the agent-select payload may not
+  carry a pod id). Snapshots captured before the field existed lack it and `region`, so treat a
+  missing value like `null`. The header appends it to the mode line: `Competitive · US West
+  (N. California)`.
 - **`name` = null** when `incognito` is true (except for your own row) or the name-service did
   not return a name. Always guard for null and render a placeholder.
 - **`accountLevel` = null** when the player is incognito, OR set "hide my level" — in either

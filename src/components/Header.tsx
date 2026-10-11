@@ -106,7 +106,7 @@ function DiagnosticsItem({ screen, heldTable }: { screen: string; heldTable: boo
 }
 
 /**
- * Map, mode, state chip and freshness. The map splash carries the colour. With `lastMatch`
+ * Map, mode and server, state chip and freshness. The map splash carries the colour. With `lastMatch`
  * the snapshot is a held one from a match that has ended, so the chip must not read as live.
  */
 export function Header({
@@ -127,7 +127,7 @@ export function Header({
 }) {
   const map = snapshot?.map ?? null;
   const chip = lastMatch ? LAST_MATCH : snapshot ? CHIP[snapshot.status] : CONNECTING;
-  const mode = snapshot?.mode ?? null;
+  const subtitle = [snapshot?.mode, snapshot?.server].filter(Boolean).join(" · ");
 
   // The header outlives every screen, so the one check of the session belongs here.
   useEffect(() => {
@@ -164,7 +164,7 @@ export function Header({
           <h1 className="truncate text-[13px] font-semibold tracking-[0.14em] text-neutral-100 uppercase">
             {map?.name || "Valorant Tracker"}
           </h1>
-          {mode && <p className="truncate text-[11px] text-neutral-500">{mode}</p>}
+          {subtitle && <p className="truncate text-[11px] text-neutral-500">{subtitle}</p>}
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-3">

@@ -7,6 +7,8 @@
     "listViewUrl": "https://media.valorant-api.com/maps/1c18ab1f-420d-0d8b-71d0-77ad3c439115/listviewicon.png"
   },
   "mode": "Competitive",
+  "server": "US West (N. California)",
+  "region": "NA",
   "ownTeam": "Blue",
   "enriched": true,
   "lastUpdated": 1787618247682,

@@ -111,6 +111,10 @@ export interface TrackerSnapshot {
   status: AppStatus;
   map: MapInfo | null;
   mode: string | null;
+  /** Server picker label, e.g. "US West (N. California)". Older captures lack it. */
+  server: string | null;
+  /** Upper-case region code ("NA", "EU", ...). Diagnostics only; not rendered. */
+  region: string | null;
   ownTeam: string | null;
   /** Pre-ordered by the backend (ally block first, self first). Never re-sort. */
   players: PlayerRow[];

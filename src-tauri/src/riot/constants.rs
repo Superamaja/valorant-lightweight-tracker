@@ -97,6 +97,65 @@ fn title_case(raw: &str) -> String {
     out
 }
 
+/// Game server label for a match `GamePodID`, e.g. `aresriot.aws-usw1-prod.na-gp-norcal-1`
+/// or the older `aresriot.aws-rclusterprod-apne1-1.ap-gp-mumbai-awsedge-1`. The pod is the
+/// last dot-separated segment, `<region>-gp-<city>[-awsedge]-<n>`, keyed on `<city>`. An
+/// unknown city is title-cased; an id that is not in that shape has no server.
+pub fn game_server_name(pod_id: &str) -> Option<String> {
+    let pod = pod_id.rsplit('.').next()?;
+    let (region, rest) = pod.split_once("-gp-")?;
+    let (head, n) = rest.rsplit_once('-')?;
+    let city = head.split('-').next()?;
+    let well_formed = !region.is_empty()
+        && !n.is_empty()
+        && n.bytes().all(|b| b.is_ascii_digit())
+        && !city.is_empty()
+        && city.bytes().all(|b| b.is_ascii_alphanumeric());
+    if !well_formed {
+        return None;
+    }
+    Some(match game_server_label(city) {
+        Some(label) => label.to_string(),
+        None => {
+            vlt_log!("state", "unknown game pod city {city}");
+            title_case(city)
+        }
+    })
+}
+
+/// Pod city token -> the in-game server picker's label.
+/// Source: https://support-valorant.riotgames.com/hc/en-us/articles/360055678634-Server-Select
+fn game_server_label(city: &str) -> Option<&'static str> {
+    Some(match city {
+        "norcal" => "US West (N. California)",
+        "oregon" => "US West (Oregon)",
+        "ashburn" => "US East (N. Virginia)",
+        "dallas" => "US Central (Texas)",
+        "chicago" => "US Central (Illinois)",
+        "atlanta" => "US Central (Georgia)",
+        "santiago" => "Santiago",
+        "mexicocity" => "Mexico City",
+        "miami" => "Miami",
+        "saopaulo" => "Sao Paulo",
+        "frankfurt" => "Frankfurt",
+        "paris" => "Paris",
+        "stockholm" => "Stockholm",
+        "istanbul" => "Istanbul",
+        "london" => "London",
+        "warsaw" => "Warsaw",
+        "madrid" => "Madrid",
+        "bahrain" => "Bahrain",
+        "seoul" => "Seoul",
+        "hongkong" => "Hong Kong",
+        "tokyo" => "Tokyo",
+        "singapore" => "Singapore",
+        "sydney" => "Sydney",
+        "mumbai" => "Mumbai",
+        "manila" => "Manila",
+        _ => return None,
+    })
+}
+
 /// Static `X-Riot-ClientPlatform` base64 blob (vRY hardcodes this; accepted regardless
 /// of the real OS version). Decodes to the platformType/OS/OSVersion/Chipset JSON.
 pub const CLIENT_PLATFORM: &str = "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9";
@@ -172,6 +231,46 @@ mod tests {
         assert_eq!(game_mode_name("brandnewmode"), "Brandnewmode");
         assert_eq!(game_mode_name("Brandnewmode"), "Brandnewmode");
         assert_eq!(game_mode_name("日本"), "日本");
+    }
+
+    #[test]
+    fn game_pod_ids_map_to_server_labels() {
+        assert_eq!(
+            game_server_name("aresriot.aws-usw1-prod.na-gp-norcal-1").as_deref(),
+            Some("US West (N. California)")
+        );
+        assert_eq!(
+            game_server_name("aresriot.aws-rclusterprod-apne1-1.ap-gp-tokyo-1").as_deref(),
+            Some("Tokyo")
+        );
+        assert_eq!(
+            game_server_name("aresriot.aws-rclusterprod-aps1-1.ap-gp-mumbai-awsedge-1").as_deref(),
+            Some("Mumbai")
+        );
+    }
+
+    #[test]
+    fn an_unknown_pod_city_is_title_cased() {
+        assert_eq!(
+            game_server_name("aresriot.aws-use1-prod.na-gp-virginia-2").as_deref(),
+            Some("Virginia")
+        );
+    }
+
+    #[test]
+    fn a_malformed_pod_id_has_no_server() {
+        for id in [
+            "",
+            "garbage",
+            "aresriot.aws-usw1-prod",
+            "aresriot.aws-usw1-prod.na-gp-norcal",
+            "aresriot.aws-usw1-prod.na-gp--1",
+            "aresriot.aws-usw1-prod.-gp-norcal-1",
+            "aresriot.aws-usw1-prod.na-gp-norcal-x",
+            "aresriot.aws-usw1-prod.na-gp-nor cal-1",
+        ] {
+            assert_eq!(game_server_name(id), None, "{id:?}");
+        }
     }
 
     #[test]

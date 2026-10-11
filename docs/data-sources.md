@@ -7,6 +7,21 @@
 - Those tokens authorize calls to Riot's **remote** endpoints (`pd.<shard>.a.pvp.net`, `glz-<region>-1.<shard>.a.pvp.net`) for match info: current game/pregame, player MMR, competitive updates (rank, RR, peak rank).
 - A local **websocket** (same port/auth) pushes presence/state events — how vRY detects menu → pregame → ingame.
 
+## Game server labels
+
+The header's server label comes from the match `GamePodID` (city token mapped in
+`src-tauri/src/riot/constants.rs`, `game_server_label`). Labels are the in-game server picker's,
+per Riot Support "Server Select":
+https://support-valorant.riotgames.com/hc/en-us/articles/360055678634-Server-Select
+
+- **Confirmed pod tokens** (seen in real pod ids): `norcal` (live capture
+  `aresriot.aws-usw1-prod.na-gp-norcal-1`), `hongkong`, `tokyo`, `singapore`, `sydney`, `mumbai`.
+- **Inferred tokens** (label from Riot, token guessed): `oregon`, `ashburn`, `dallas`, `chicago`,
+  `atlanta`, `santiago`, `mexicocity`, `miami`, `saopaulo`, `frankfurt`, `paris`, `stockholm`,
+  `istanbul`, `london`, `warsaw`, `madrid`, `bahrain`, `seoul`, `manila`. An unmatched token shows
+  title-cased, so a wrong guess degrades to a readable city name. Confirm them from the
+  `GamePodPingServiceInfo` keys in `pnpm snapshot`'s `pods.json` (one capture per region).
+
 ## Reference material
 
 - vRY source (correctness reference): https://github.com/mdevio/VALORANT-rank-yoinker — see `src/requestsV.py` (endpoint plumbing), `src/presences.py`, `src/rank.py`, `src/player_stats.py`. ISC license, so borrowing logic is fine.

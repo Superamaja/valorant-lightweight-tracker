@@ -172,7 +172,7 @@ GET {glz_url}/core-game/v1/matches/{match_id}
 Response fields used:
 ```
 MapID: string                    // e.g. "/Game/Maps/Ascent/Ascent" — lowercase + look up against valorant-api maps (§7-adjacent, see mapUrl matching in content.py)
-GamePodID: string                // server identifier
+GamePodID: string                // server identifier, e.g. "aresriot.aws-usw1-prod.na-gp-norcal-1"
 Players: [
   {
     Subject: string,             // puuid
@@ -187,6 +187,13 @@ Players: [
 ]
 ```
 Own team = the `TeamID` where `Subject == own_puuid`.
+
+Game server: `constants::game_server_name` reads the last dot-separated segment of `GamePodID`
+as `<region>-gp-<city>[-awsedge]-<n>` and maps `<city>` to the in-game server picker's label
+(table + confirmed/inferred tokens in `docs/data-sources.md`); an unknown city is title-cased,
+an id of any other shape gives no server. The pregame payload's `GamePodID` is read the same
+way when present (no capture confirms it exists there). Zero extra requests: both payloads are
+already fetched. The snapshot's `region` is the session's glz region upper-cased.
 
 ### PREGAME (agent select)
 
