@@ -3,6 +3,16 @@
 What changed in each release, in plain English. Newest release first. Every
 version tag needs an entry here before it can be released.
 
+## v0.1.5 - 2026-10-11
+
+- Added support for Gauntlet: Glitched. The header now shows the mode name, and all
+  16 players appear in one list with a small team number next to each player, so
+  you can see who is paired with whom. Your own duo is listed first.
+- Improved modes with more than two teams in general (this should also cover
+  Deathmatch): players are no longer split into a wrong "Your team" / "Enemy team".
+- Added the game server to the header during a match, using the same names as the
+  in-game server picker, for example "US West (N. California)".
+
 ## v0.1.4 - 2026-09-23
 
 - Fixed headshot % and KD sometimes showing N/A for you (or others) when queuing
