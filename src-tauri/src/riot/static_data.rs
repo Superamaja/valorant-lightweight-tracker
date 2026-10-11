@@ -25,6 +25,9 @@ struct MapStatic {
 struct AgentStatic {
     display_name: String,
     display_icon: Option<String>,
+    /// valorant-api `isPlayableCharacter`. Non-playable entries stay in the map because some
+    /// modes put one on every player (Gauntlet: Glitched's draft agent).
+    playable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +47,7 @@ struct SkinStatic {
 
 /// Shape version of the cached blob. Bumped whenever a new mapping is added, so caches
 /// written by an older build are refetched instead of serving half the data.
-const CURRENT_STATIC_SCHEMA: u32 = 1;
+const CURRENT_STATIC_SCHEMA: u32 = 2;
 
 /// Cached, parsed static data for one game version.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,7 +78,8 @@ impl StaticData {
             && !self.skins.is_empty()
     }
 
-    /// Resolve an agent uuid (any case) to display-ready info. None -> None.
+    /// Resolve an agent uuid (any case) to display-ready info. None -> None. An unknown uuid
+    /// counts as playable: nothing says otherwise.
     pub fn agent(&self, character_id: Option<&str>) -> Option<AgentInfo> {
         let id = character_id?.to_lowercase();
         let a = self.agents.get(&id);
@@ -83,6 +87,7 @@ impl StaticData {
             id: id.clone(),
             name: a.map(|a| a.display_name.clone()).unwrap_or_default(),
             icon_url: a.and_then(|a| a.display_icon.clone()),
+            playable: a.is_none_or(|a| a.playable),
         })
     }
 
@@ -146,7 +151,8 @@ pub fn parse_version(value: &Value) -> Option<String> {
         .map(String::from)
 }
 
-/// Parse the `/agents` payload into lowercased-uuid -> agent.
+/// Parse the `/agents` payload into lowercased-uuid -> agent, non-playable entries included
+/// (flagged). A missing `isPlayableCharacter` counts as playable.
 fn parse_agents(value: &Value) -> HashMap<String, AgentStatic> {
     let mut out = HashMap::new();
     let Some(arr) = value.get("data").and_then(|d| d.as_array()) else {
@@ -154,10 +160,6 @@ fn parse_agents(value: &Value) -> HashMap<String, AgentStatic> {
     };
     for a in arr {
         let Some(uuid) = a.get("uuid").and_then(|v| v.as_str()) else { continue };
-        // Skip the non-playable duplicate agent entries when the flag is present.
-        if a.get("isPlayableCharacter").and_then(|v| v.as_bool()) == Some(false) {
-            continue;
-        }
         out.insert(
             uuid.to_lowercase(),
             AgentStatic {
@@ -167,6 +169,7 @@ fn parse_agents(value: &Value) -> HashMap<String, AgentStatic> {
                     .unwrap_or_default()
                     .to_string(),
                 display_icon: a.get("displayIcon").and_then(|v| v.as_str()).map(String::from),
+                playable: a.get("isPlayableCharacter").and_then(|v| v.as_bool()) != Some(false),
             },
         );
     }
@@ -429,7 +432,7 @@ pub async fn fetch(client: &reqwest::Client) -> Result<StaticData> {
         return Ok(cached);
     }
 
-    let agents = fetch_list(client, "agents?isPlayableCharacter=true").await?;
+    let agents = fetch_list(client, "agents").await?;
     let maps = fetch_list(client, "maps").await?;
     let tiers = fetch_list(client, "competitivetiers").await?;
     // `/weapons` (not `/weapons/skins`) so we can filter to just the Vandal + Phantom skins
@@ -476,13 +479,21 @@ mod tests {
     }
 
     #[test]
-    fn skips_non_playable_agents() {
+    fn keeps_non_playable_agents_flagged() {
         let agents = json!({ "data": [
-            { "uuid": "dup", "displayName": "Sova(NPE)", "isPlayableCharacter": false }
+            { "uuid": "773F0C78-4486-752B-68EF-4585D7F4B848", "displayName": "KAY/O",
+              "displayIcon": "https://x/draft.png", "isPlayableCharacter": false },
+            { "uuid": "reyna", "displayName": "Reyna", "isPlayableCharacter": true },
+            { "uuid": "unflagged", "displayName": "Jett" }
         ]});
         let data = build("v".into(), &agents, &json!({}), &json!({}), &json!({}));
-        // still returns an id-only info (not in map) but the entry was skipped.
-        assert_eq!(data.agent(Some("dup")).unwrap().name, "");
+        let draft = data.agent(Some("773f0c78-4486-752b-68ef-4585d7f4b848")).unwrap();
+        assert_eq!(draft.name, "KAY/O");
+        assert_eq!(draft.icon_url.as_deref(), Some("https://x/draft.png"));
+        assert!(!draft.playable);
+        assert!(data.agent(Some("reyna")).unwrap().playable);
+        assert!(data.agent(Some("unflagged")).unwrap().playable);
+        assert!(data.agent(Some("unknown")).unwrap().playable);
     }
 
     #[test]
@@ -666,6 +677,9 @@ mod tests {
         assert!(old.is_complete());
         // A blob written before the schema field existed deserializes to 0 -> refetched.
         old.schema = 0;
+        assert!(!old.is_complete());
+        // Schema 1 filtered non-playable agents out, so it lacks the draft agent -> refetched.
+        old.schema = 1;
         assert!(!old.is_complete());
     }
 

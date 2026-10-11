@@ -259,6 +259,7 @@ interface AgentInfo {
   id: string;                   // agent uuid (lowercased)
   name: string;                 // "Jett" ("" if unresolved)
   iconUrl: string | null;       // valorant-api displayIcon URL
+  playable: boolean;            // valorant-api isPlayableCharacter; true when unresolved
 }
 
 interface RankInfo {
@@ -319,6 +320,10 @@ interface RankInfo {
   as possible. During Pregame a teammate who hasn't locked yet has `agent: null` and
   `agentSelectionState: "selected"` (still picking) or `null`; once locked, `agent` is populated
   and `agentSelectionState: "locked"`. It is `null` outside Pregame.
+- **`agent.playable`** is `false` only for a mode's stand-in agent. Gauntlet: Glitched gives
+  every player the draft agent `773f0c78-4486-752b-68ef-4585d7f4b848` (valorant-api name
+  "KAY/O", with its own `displayIcon`). Snapshots captured before the field existed lack it:
+  read missing as `true`.
 - **Ranks never error a row.** A private profile / new account / API hiccup yields
   `tier: 0, name: "Unranked", iconUrl: null` and `rr: 0` for that player only.
 - **`peakRank`** already accounts for the pre-Ascendant tier renumbering — treat `tier` as a

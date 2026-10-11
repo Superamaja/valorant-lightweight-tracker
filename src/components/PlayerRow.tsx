@@ -66,6 +66,7 @@ export function PlayerRow({
       <PartyBar mark={player.partyId ? layout.parties.get(player.partyId) : undefined} />
       <AgentCell
         agent={player.agent}
+        group={player.group ?? null}
         selectionState={player.agentSelectionState}
         level={player.accountLevel}
       />

@@ -101,6 +101,25 @@ export const ROW_PLATE = ROW_PLATE_ON;
 /** Heading tint for a block that holds both sides. */
 export const HEADER_NEUTRAL = { dot: "bg-neutral-500", rule: "from-neutral-500/30" };
 
+/**
+ * Multi-team portrait tints, indexed by `group - 1` and wrapping past the end. Sampled from
+ * the in-game Gauntlet: Glitched scoreboard's faction tiles (teams 1..8), which tint the
+ * shared draft-agent portrait the same way.
+ */
+export const GROUP_TINT = [
+  "#7d34de",
+  "#27bce5",
+  "#2a45cb",
+  "#65bb1a",
+  "#d5a91d",
+  "#dc5f31",
+  "#e371e5",
+  "#ad2f6c",
+] as const;
+
+export const groupTint = (group: number): string =>
+  GROUP_TINT[(group - 1) % GROUP_TINT.length];
+
 export const TEAM_TINT: Record<TeamSide, { dot: string; rule: string; row: string }> = {
   ally: {
     dot: "bg-ally",

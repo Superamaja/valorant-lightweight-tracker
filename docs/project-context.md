@@ -258,6 +258,11 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    group number per row (`docs/backend-spec.md` §5 "Multi-team rosters"). Deathmatch is
    assumed to take the distinct-`TeamID` branch but is unverified until a `pnpm snapshot`
    capture of it exists.
+   Draft agent: Gauntlet: Glitched puts every player on one non-playable valorant-api agent
+   ("KAY/O", `AbilityDraftAgent`), which the old playable-only agents fetch dropped (portrait
+   "?"). Static data now keeps non-playable agents flagged (`AgentInfo.playable`, static schema
+   2), and the UI tints that portrait per group from an 8-colour palette sampled from the
+   in-game scoreboard (`docs/ui-spec.md`).
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,

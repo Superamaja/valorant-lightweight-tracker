@@ -46,6 +46,9 @@ pub struct AgentInfo {
     pub name: String,
     /// `displayIcon` URL from valorant-api, or null if unresolved.
     pub icon_url: Option<String>,
+    /// valorant-api `isPlayableCharacter`; false for mode-specific stand-ins such as
+    /// Gauntlet: Glitched's draft agent. True when unresolved.
+    pub playable: bool,
 }
 
 /// Resolved rank (current or peak).

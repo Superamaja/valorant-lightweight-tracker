@@ -202,6 +202,16 @@ A grouped roster sets `PlayerRow.group`, `is_ally` = same group as the local pla
 unreadable `TeamNumber` counts as absent. Deathmatch is expected to hit rule 2 (one player per
 team) but no capture confirms its shape yet; check with `pnpm snapshot`.
 
+Draft agent: every Gauntlet: Glitched player's coregame `CharacterID` is
+`773f0c78-4486-752b-68ef-4585d7f4b848`, a valorant-api entry with displayName "KAY/O",
+developerName `AbilityDraftAgent` and `isPlayableCharacter: false`. Static data therefore
+fetches the unfiltered `/v1/agents` (one request, as before) and keeps non-playable entries in
+the uuid map with `playable: false` (a missing flag counts as playable); `AgentInfo.playable`
+carries it to the UI, which tints that portrait per group. The agent map is only ever read by
+uuid lookup, so the extra entries (NPE duplicates and the like) never surface on their own.
+Static schema 2 marks caches written with the filtered list (schema 1) incomplete, so they
+are refetched.
+
 Game server: `constants::game_server_name` reads the last dot-separated segment of `GamePodID`
 as `<region>-gp-<city>[-awsedge]-<n>` and maps `<city>` to the in-game server picker's label
 (table + confirmed/inferred tokens in `docs/data-sources.md`); an unknown city is title-cased,

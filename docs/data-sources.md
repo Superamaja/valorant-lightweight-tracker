@@ -32,6 +32,7 @@ https://support-valorant.riotgames.com/hc/en-us/articles/360055678634-Server-Sel
 
 - Free, no API key. Agents, ranks (tier icons/names), weapon skins, maps, game modes — all imagery a good UI needs.
 - Data is versioned per game patch; cache it locally and refresh when the game version changes.
+- `/v1/agents` is fetched unfiltered: non-playable entries matter, e.g. Gauntlet: Glitched's draft agent `773f0c78-4486-752b-68ef-4585d7f4b848` ("KAY/O", developerName `AbilityDraftAgent`, `isPlayableCharacter: false`), which every player in that mode carries as `CharacterID`.
 
 ## Warnings
 

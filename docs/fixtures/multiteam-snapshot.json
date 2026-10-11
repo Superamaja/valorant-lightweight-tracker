@@ -23,9 +23,10 @@
       "group": 3,
       "isSelf": true,
       "agent": {
-        "id": "f94c3b30-42be-e959-889c-5aa313dba261",
-        "name": "Raze",
-        "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -77,9 +78,10 @@
       "group": 3,
       "isSelf": false,
       "agent": {
-        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
-        "name": "Phoenix",
-        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -137,9 +139,10 @@
       "group": 1,
       "isSelf": false,
       "agent": {
-        "id": "add6443a-41bd-e414-f6ad-e58d267f4e95",
-        "name": "Jett",
-        "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -197,9 +200,10 @@
       "group": 1,
       "isSelf": false,
       "agent": {
-        "id": "0e38b510-41a8-5780-5e8f-568b2a4f2d6c",
-        "name": "Iso",
-        "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -257,9 +261,10 @@
       "group": 2,
       "isSelf": false,
       "agent": {
-        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
-        "name": "Phoenix",
-        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -315,9 +320,10 @@
       "group": 2,
       "isSelf": false,
       "agent": {
-        "id": "8e253930-4c05-31dd-1b6c-968525494517",
-        "name": "Omen",
-        "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -371,9 +377,10 @@
       "group": 4,
       "isSelf": false,
       "agent": {
-        "id": "e370fa57-4757-3604-3648-499e1f642d3f",
-        "name": "Gekko",
-        "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -431,9 +438,10 @@
       "group": 4,
       "isSelf": false,
       "agent": {
-        "id": "b444168c-4e35-8076-db47-ef9bf368f384",
-        "name": "Tejo",
-        "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -488,9 +496,10 @@
       "group": 5,
       "isSelf": false,
       "agent": {
-        "id": "add6443a-41bd-e414-f6ad-e58d267f4e95",
-        "name": "Jett",
-        "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -542,9 +551,10 @@
       "group": 5,
       "isSelf": false,
       "agent": {
-        "id": "a3bfb853-43b2-7238-a4f1-ad90e9e46bcc",
-        "name": "Reyna",
-        "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -602,9 +612,10 @@
       "group": 6,
       "isSelf": false,
       "agent": {
-        "id": "add6443a-41bd-e414-f6ad-e58d267f4e95",
-        "name": "Jett",
-        "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -662,9 +673,10 @@
       "group": 6,
       "isSelf": false,
       "agent": {
-        "id": "0e38b510-41a8-5780-5e8f-568b2a4f2d6c",
-        "name": "Iso",
-        "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -722,9 +734,10 @@
       "group": 7,
       "isSelf": false,
       "agent": {
-        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
-        "name": "Phoenix",
-        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -780,9 +793,10 @@
       "group": 7,
       "isSelf": false,
       "agent": {
-        "id": "8e253930-4c05-31dd-1b6c-968525494517",
-        "name": "Omen",
-        "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -836,9 +850,10 @@
       "group": 8,
       "isSelf": false,
       "agent": {
-        "id": "f94c3b30-42be-e959-889c-5aa313dba261",
-        "name": "Raze",
-        "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {
@@ -890,9 +905,10 @@
       "group": 8,
       "isSelf": false,
       "agent": {
-        "id": "eb93336a-449b-9c1b-0a54-a891f7921d69",
-        "name": "Phoenix",
-        "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png"
+        "id": "773f0c78-4486-752b-68ef-4585d7f4b848",
+        "name": "KAY/O",
+        "iconUrl": "https://media.valorant-api.com/agents/773f0c78-4486-752b-68ef-4585d7f4b848/displayicon.png",
+        "playable": false
       },
       "agentSelectionState": null,
       "currentRank": {

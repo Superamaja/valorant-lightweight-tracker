@@ -32,6 +32,11 @@ export interface AgentInfo {
   id: string;
   name: string;
   iconUrl: string | null;
+  /**
+   * False for a mode's stand-in agent (Gauntlet: Glitched's draft KAY/O). Missing on
+   * snapshots captured before the field existed: treat as playable.
+   */
+  playable?: boolean;
 }
 
 export interface RankInfo {

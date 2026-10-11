@@ -12,6 +12,8 @@ version tag needs an entry here before it can be released.
   Deathmatch): players are no longer split into a wrong "Your team" / "Enemy team".
 - Added the game server to the header during a match, using the same names as the
   in-game server picker, for example "US West (N. California)".
+- Fixed Gauntlet: Glitched portraits showing "?". They now show the team-coloured
+  KAY/O, like the in-game scoreboard.
 
 ## v0.1.4 - 2026-09-23
 
