@@ -46,6 +46,11 @@ pub struct AssembleInput<'a> {
 /// resolution, and the guaranteed row ordering (see `order_rows`).
 pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
     let own_party = input.parties.get(input.own_puuid).cloned();
+    let own_group = input
+        .players
+        .iter()
+        .find(|p| p.puuid == input.own_puuid)
+        .and_then(|p| p.group);
     let default_mmr = MmrResponse::default();
 
     let mut rows: Vec<PlayerRow> = input
@@ -53,7 +58,10 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
         .iter()
         .map(|p| {
             let is_self = p.puuid == input.own_puuid;
-            let is_ally = input.own_team.map(|t| t == p.team).unwrap_or(false);
+            let is_ally = match p.group {
+                Some(group) => own_group == Some(group),
+                None => input.own_team.map(|t| t == p.team).unwrap_or(false),
+            };
             let player_party = input.parties.get(&p.puuid).cloned();
             let shares_party = matches!((&own_party, &player_party), (Some(a), Some(b)) if a == b);
             let is_party_of_self = shares_party && !is_self;
@@ -123,6 +131,7 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
                 incognito: p.incognito,
                 team: p.team.clone(),
                 is_ally,
+                group: p.group,
                 is_self,
                 agent: input.static_data.agent(p.character_id.as_deref()),
                 agent_selection_state: p.selection_state.clone(),
@@ -151,13 +160,15 @@ pub fn assemble_players(input: &AssembleInput) -> Vec<PlayerRow> {
 }
 
 /// Impose the guaranteed row order the UI relies on (backend owns ordering, not the UI):
-/// 1. the local player's team (`is_ally`) first, then enemies;
+/// 1. the local player's team (`is_ally`) first, then enemies; in a multi-team mode the
+///    enemy groups follow in ascending `group` order;
 /// 2. within the ally block, the local player (`is_self`) first;
 /// 3. deterministic tiebreak within each block: by display name (case-insensitive), with
 ///    hidden/unresolved names (`None`, e.g. incognito) sorted last, then by puuid.
 ///
 /// The UI colours purely by `is_ally` (ally block = blue) — it never keys off the raw
-/// Red/Blue `team` id, so this ordering plus `is_ally` is the whole contract.
+/// Red/Blue `team` id, so this ordering plus `is_ally` (and `group`, when set) is the whole
+/// contract.
 ///
 /// Uses `sort_by_cached_key` so each row's key (notably the lowercased name) is computed
 /// once, not on every pairwise comparison as the old `sort_by` did.
@@ -170,6 +181,7 @@ fn order_rows(rows: &mut [PlayerRow]) {
         };
         (
             !r.is_ally,  // ally block before enemy block
+            r.group,     // multi-team: enemy groups ascending (None everywhere otherwise)
             !r.is_self,  // self first (only ever within the ally block)
             name,        // then by display name
             r.id.clone(), // stable final tiebreak
@@ -197,7 +209,12 @@ mod tests {
             account_level: 100,
             incognito: false,
             hide_account_level: false,
+            group: None,
         }
+    }
+
+    fn grouped_player(puuid: &str, team: &str, group: u32) -> MatchPlayer {
+        MatchPlayer { group: Some(group), ..base_player(puuid, team) }
     }
 
     /// Test builder that fills the phase-2 inputs with empty maps by default so each test
@@ -557,6 +574,41 @@ mod tests {
         // All allies precede all enemies.
         assert!(rows.iter().take(4).all(|r| r.is_ally));
         assert!(rows.iter().skip(4).all(|r| !r.is_ally));
+    }
+
+    #[test]
+    fn multi_team_allies_are_the_own_group_and_other_groups_follow_ascending() {
+        // Duo shape: TeamID is Blue for nearly everyone, so only the group decides allies.
+        let players = vec![
+            grouped_player("g3-a", "Blue", 3),
+            grouped_player("g1-b", "Blue", 1),
+            grouped_player("mate", "Blue", 2),
+            grouped_player("g1-a", "Blue", 1),
+            grouped_player("me", "Red", 2),
+            grouped_player("g3-b", "Red", 3),
+        ];
+        let case = Case { own_team: Some("Red".into()), ..Default::default() };
+        let rows = case.run(&players, "me");
+        let order: Vec<(&str, Option<u32>, bool)> =
+            rows.iter().map(|r| (r.id.as_str(), r.group, r.is_ally)).collect();
+        assert_eq!(
+            order,
+            vec![
+                ("me", Some(2), true),
+                ("mate", Some(2), true),
+                ("g1-a", Some(1), false),
+                ("g1-b", Some(1), false),
+                ("g3-a", Some(3), false),
+                ("g3-b", Some(3), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn two_team_rows_carry_no_group() {
+        let players = vec![base_player("me", "Blue"), base_player("foe", "Red")];
+        let case = Case { own_team: Some("Blue".into()), ..Default::default() };
+        assert!(case.run(&players, "me").iter().all(|r| r.group.is_none()));
     }
 
     #[test]

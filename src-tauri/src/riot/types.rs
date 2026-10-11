@@ -133,8 +133,11 @@ pub struct PlayerRow {
     pub incognito: bool,
     /// Raw team id ("Red"/"Blue").
     pub team: String,
-    /// True if on the local player's team.
+    /// True if on the local player's team (in a multi-team mode: in the local player's group).
     pub is_ally: bool,
+    /// Multi-team modes only (more than two sides, e.g. duos): the side this player is on,
+    /// numbered from 1. Null in two-team modes.
+    pub group: Option<u32>,
     /// True if this row is the local player.
     pub is_self: bool,
     /// Resolved agent, or null (not yet selected in pregame / unresolved).

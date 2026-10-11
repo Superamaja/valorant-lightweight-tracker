@@ -75,6 +75,11 @@ export interface PlayerRow {
   /** Riot's internal team id. Never use it for colour — colour by `isAlly`. */
   team: string;
   isAlly: boolean;
+  /**
+   * Multi-team modes only (e.g. duos): the side this player is on, from 1. Null in two-team
+   * modes; missing on snapshots captured before the field existed.
+   */
+  group?: number | null;
   isSelf: boolean;
   agent: AgentInfo | null;
   agentSelectionState: string | null;

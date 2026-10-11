@@ -27,6 +27,7 @@ export const HS_SCOPE = `last ${STATS_WINDOW} competitive matches`;
  * breathes rather than staying pinned at its floor.
  */
 const COLUMNS: Column[] = [
+  { key: "group", label: "", width: "12px" },
   { key: "party", label: "", width: "10px" },
   { key: "agent", label: "", width: "44px" },
   { key: "name", label: "Player", width: "minmax(120px,3fr)", left: true },
@@ -55,11 +56,17 @@ export const SKIN_ART_WIDTH = "max-w-22";
 /** Loadouts only exist once a match starts, so the skin columns are Ingame-only. */
 const SKIN_KEYS = new Set(["vandal", "phantom"]);
 
-export const visibleColumns = (withSkins: boolean): Column[] =>
-  withSkins ? COLUMNS : COLUMNS.filter((column) => !SKIN_KEYS.has(column.key));
+/** The group number only exists in multi-team modes. */
+const GROUP_KEY = "group";
 
-export const gridTemplate = (withSkins: boolean): string =>
-  visibleColumns(withSkins)
+export const visibleColumns = (withSkins: boolean, withGroups: boolean): Column[] =>
+  COLUMNS.filter(
+    (column) =>
+      (withSkins || !SKIN_KEYS.has(column.key)) && (withGroups || column.key !== GROUP_KEY),
+  );
+
+export const gridTemplate = (withSkins: boolean, withGroups: boolean): string =>
+  visibleColumns(withSkins, withGroups)
     .map((column) => column.width)
     .join(" ");
 
@@ -71,6 +78,8 @@ export interface TableLayout {
   /** `grid-template-columns` value from `gridTemplate`. */
   template: string;
   withSkins: boolean;
+  /** Multi-team mode: rows lead with their group number. */
+  withGroups: boolean;
   parties: Map<string, PartyMark>;
 }
 
@@ -88,6 +97,9 @@ export type TeamSide = "ally" | "enemy";
 export const ROW_PLATE_ON = "to-white/[0.025]";
 export const ROW_PLATE_OFF = "to-transparent";
 export const ROW_PLATE = ROW_PLATE_ON;
+
+/** Heading tint for a block that holds both sides. */
+export const HEADER_NEUTRAL = { dot: "bg-neutral-500", rule: "from-neutral-500/30" };
 
 export const TEAM_TINT: Record<TeamSide, { dot: string; rule: string; row: string }> = {
   ally: {

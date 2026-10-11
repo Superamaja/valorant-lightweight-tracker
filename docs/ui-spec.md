@@ -18,6 +18,7 @@ The user's main gripe with vRY's TUI is text ranks. Every place an image exists 
 - Single window, single screen. No tabs/navigation in v1. The player table IS the app.
 - **Header strip:** map name + mode, app-state chip ("Waiting for match" / "Agent select" / "In match") that doubles as the health indicator, subtle "last updated" text.
 - **Main region:** table split into two team blocks — **user's team ALWAYS first and ALWAYS blue** (enemy second, red), regardless of Riot's internal Red/Blue team ids (user dislikes vRY using raw API order/colors). The backend guarantees this ordering in players[] (ally block first, self first within it); the UI colors only by `isAlly`, never by the raw team id. Subtle tinted accents, not loud fills.
+- **Multi-team modes** (any row has a non-null `group`, e.g. Gauntlet: Glitched duos): one flat block labelled "Players" with the count (same header style, neutral dot and rule) instead of the ally/enemy blocks, in backend order. Each row leads with its group number in a small muted label before the party bar, so partners read as a pair. Row tints still come from `isAlly` (own group ally-tinted, everyone else enemy-tinted); no per-group colours, no per-group blocks (user decision). Normal modes are unchanged.
 - **Row, left→right:** agent portrait · name#tag · current rank icon (+RR) · peak rank icon (smaller, full colour) · account level. Party members marked with a matching colour bar. (Superseded in detail by the revisions below.)
 
 ## Style

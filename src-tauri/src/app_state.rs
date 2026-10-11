@@ -2469,6 +2469,7 @@ mod tests {
                 account_level: 0,
                 incognito: false,
                 hide_account_level: false,
+                group: None,
             }],
             own_team: Some("Blue".into()),
             map_id: Some("/Game/Maps/Ascent/Ascent".into()),

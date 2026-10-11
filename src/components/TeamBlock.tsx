@@ -1,20 +1,23 @@
 import type { PlayerRow as Player } from "../ipc/types";
-import { TEAM_TINT, type TableLayout, type TeamSide } from "../lib/table";
+import { HEADER_NEUTRAL, TEAM_TINT, type TableLayout, type TeamSide } from "../lib/table";
 import { PlayerRow } from "./PlayerRow";
 
-/** One team: a hairline heading plus its rows, in the order the backend sent them. */
+/**
+ * One team: a hairline heading plus its rows, in the order the backend sent them. Without a
+ * `side` the block mixes both (multi-team modes) and the heading stays neutral.
+ */
 export function TeamBlock({
   side,
   label,
   players,
   layout,
 }: {
-  side: TeamSide;
+  side?: TeamSide;
   label: string;
   players: Player[];
   layout: TableLayout;
 }) {
-  const tint = TEAM_TINT[side];
+  const tint = side ? TEAM_TINT[side] : HEADER_NEUTRAL;
 
   return (
     <section className="mt-4 first:mt-2">
@@ -29,7 +32,12 @@ export function TeamBlock({
 
       <div className="flex flex-col gap-1">
         {players.map((player) => (
-          <PlayerRow key={player.id} player={player} side={side} layout={layout} />
+          <PlayerRow
+            key={player.id}
+            player={player}
+            side={player.isAlly ? "ally" : "enemy"}
+            layout={layout}
+          />
         ))}
       </div>
     </section>

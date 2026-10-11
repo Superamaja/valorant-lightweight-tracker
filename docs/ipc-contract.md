@@ -200,7 +200,9 @@ interface PlayerRow {
   name: string | null;          // "GameName#TagLine", or null when hidden (incognito) / unresolved
   incognito: boolean;           // player enabled streamer/incognito mode — do NOT de-anonymize
   team: string;                 // raw team id ("Red"|"Blue")
-  isAlly: boolean;              // on the local player's team
+  isAlly: boolean;              // on the local player's team (multi-team: in their group)
+  group: number | null;         // multi-team modes only (more than two sides, e.g. duos):
+                                // the side this player is on, from 1. null in two-team modes
   isSelf: boolean;              // this row is the local player
   agent: AgentInfo | null;      // null when not yet selected (pregame) / unresolved
   agentSelectionState: string | null; // pregame only; Riot's raw CharacterSelectionState
@@ -284,9 +286,13 @@ interface RankInfo {
   (2) within the ally block the local player (`isSelf === true`) is first; (3) the remaining
   rows in each block are sorted by display name (case-insensitive), with hidden/unresolved
   names (`name === null`, e.g. incognito) last, tie-broken by `id` (puuid) for stability.
+  In a multi-team mode (any row has a non-null `group`) the own group comes first (self
+  first), then the other groups in ascending `group` order.
   Render rows in array order. **Colour by `isAlly` only** (ally block = blue, enemy = red);
   do not read the raw `team` id for colour — it is Riot's internal Red/Blue label, exposed
-  only for debugging, and does not correspond to the ally/enemy split.
+  only for debugging, and does not correspond to the ally/enemy split. `group` is for
+  labelling and the flat-list layout only, never for colour. Snapshots captured before the
+  field existed lack it; treat that as `null`.
 - **`mode`** is one of: `Competitive`, `Unrated`, `Swiftplay`, `Spike Rush`, `Deathmatch`,
   `Escalation`, `Replication`, `Team Deathmatch`, `Custom`, `Snowball Fight`,
   `All Random One Site`, `Knockout`, `New Map`, `Gauntlet: Glitched`, or `Custom Game` (customs). Unknown queue ids

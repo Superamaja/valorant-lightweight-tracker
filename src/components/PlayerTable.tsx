@@ -1,5 +1,5 @@
 import type { TrackerSnapshot } from "../ipc/types";
-import { partyGroups, splitTeams } from "../lib/players";
+import { isMultiTeam, partyGroups, splitTeams } from "../lib/players";
 import { gridTemplate, ROW_GRID, visibleColumns, type TableLayout } from "../lib/table";
 import { TeamBlock } from "./TeamBlock";
 import { Tooltip } from "./Tooltip";
@@ -10,7 +10,7 @@ function Legend({ layout }: { layout: TableLayout }) {
       style={{ gridTemplateColumns: layout.template }}
       className={`${ROW_GRID} border-l-transparent pb-1 text-[9px] font-medium tracking-[0.14em] text-neutral-600 uppercase`}
     >
-      {visibleColumns(layout.withSkins).map((column) => (
+      {visibleColumns(layout.withSkins, layout.withGroups).map((column) => (
         <Tooltip key={column.key} content={column.hint}>
           <span className={column.left ? "" : "text-center"}>{column.label}</span>
         </Tooltip>
@@ -19,18 +19,32 @@ function Legend({ layout }: { layout: TableLayout }) {
   );
 }
 
-/** The app: two team blocks, ally first, coloured by `isAlly` only. */
+/**
+ * The app: two team blocks, ally first, coloured by `isAlly` only. A multi-team mode is one
+ * flat block instead, still in backend order.
+ */
 export function PlayerTable({ snapshot }: { snapshot: TrackerSnapshot }) {
   const pregame = snapshot.status === "Pregame";
   const withSkins = snapshot.status === "Ingame";
-  const { allies, enemies } = splitTeams(snapshot.players);
+  const withGroups = isMultiTeam(snapshot.players);
 
   const layout: TableLayout = {
-    template: gridTemplate(withSkins),
+    template: gridTemplate(withSkins, withGroups),
     withSkins,
+    withGroups,
     parties: partyGroups(snapshot.players),
   };
 
+  if (withGroups) {
+    return (
+      <div className="min-w-fit px-4 pt-2 pb-3">
+        <Legend layout={layout} />
+        <TeamBlock label="Players" players={snapshot.players} layout={layout} />
+      </div>
+    );
+  }
+
+  const { allies, enemies } = splitTeams(snapshot.players);
   return (
     <div className="min-w-fit px-4 pt-2 pb-3">
       <Legend layout={layout} />

@@ -2,8 +2,10 @@
 //! network fetching lives in `remote_api`. See spec §5.
 
 use crate::riot::error::{Error, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// A player extracted from a pregame or coregame match.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +19,9 @@ pub struct MatchPlayer {
     pub account_level: u32,
     pub incognito: bool,
     pub hide_account_level: bool,
+    /// Coregame only, in modes with more than two sides: the side this player is on (see
+    /// `assign_groups`). None in two-team modes and in pregame.
+    pub group: Option<u32>,
 }
 
 /// Parsed coregame (INGAME) match.
@@ -52,11 +57,12 @@ struct PlayerIdentityWire {
     hide_account_level: bool,
 }
 
-/// Deserialize `PlayerIdentity` leniently: a shape we don't understand becomes `None`
-/// (privacy-safe defaults below) instead of failing the whole roster.
-fn lenient_identity<'de, D>(d: D) -> std::result::Result<Option<PlayerIdentityWire>, D::Error>
+/// Deserialize a field leniently: a shape we don't understand becomes `None` (for
+/// `PlayerIdentity`, the privacy-safe defaults below) instead of failing the whole roster.
+fn lenient<'de, D, T>(d: D) -> std::result::Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
+    T: DeserializeOwned,
 {
     let value = Value::deserialize(d)?;
     Ok(serde_json::from_value(value).ok())
@@ -72,8 +78,10 @@ struct PlayerWire {
     character_id: String,
     #[serde(rename = "CharacterSelectionState", default)]
     character_selection_state: String,
-    #[serde(rename = "PlayerIdentity", default, deserialize_with = "lenient_identity")]
+    #[serde(rename = "PlayerIdentity", default, deserialize_with = "lenient")]
     player_identity: Option<PlayerIdentityWire>,
+    #[serde(rename = "TeamNumber", default, deserialize_with = "lenient")]
+    team_number: Option<u32>,
 }
 
 impl PlayerWire {
@@ -93,6 +101,7 @@ impl PlayerWire {
             account_level: identity.as_ref().map(|i| i.account_level).unwrap_or(0),
             incognito: identity.as_ref().map(|i| i.incognito).unwrap_or(true),
             hide_account_level: identity.map(|i| i.hide_account_level).unwrap_or(true),
+            group: None,
         }
     }
 }
@@ -148,12 +157,16 @@ struct CoregameWire {
 /// bogus "complete" match.
 pub fn extract_coregame(value: Value, own_puuid: &str) -> Result<CoregameData> {
     let wire: CoregameWire = serde_json::from_value(value)?;
-    let players: Vec<MatchPlayer> = wire
+    let (mut players, team_numbers): (Vec<MatchPlayer>, Vec<Option<u32>>) = wire
         .players
         .into_iter()
         .filter(|p| !p.subject.is_empty())
-        .map(|p| p.into_match_player(false))
-        .collect();
+        .map(|p| {
+            let team_number = p.team_number;
+            (p.into_match_player(false), team_number)
+        })
+        .unzip();
+    assign_groups(&mut players, &team_numbers);
     if players.is_empty() {
         return Err(Error::MalformedPayload("coregame match has no players".into()));
     }
@@ -167,6 +180,35 @@ pub fn extract_coregame(value: Value, own_puuid: &str) -> Result<CoregameData> {
         players,
         own_team,
     })
+}
+
+/// Group a roster that has more than two sides. `TeamNumber` is the side when every player
+/// carries one and it takes more than two values (duo modes, where `TeamID` is only a
+/// Blue/Red split); otherwise more than two distinct `TeamID`s are the sides, numbered by
+/// their sorted order from 1. A two-sided roster gets no groups, so `TeamID` alone decides
+/// who is an ally.
+fn assign_groups(players: &mut [MatchPlayer], team_numbers: &[Option<u32>]) {
+    let groups: Vec<u32> = match team_numbers.iter().copied().collect::<Option<Vec<u32>>>() {
+        Some(numbers) if numbers.iter().collect::<BTreeSet<_>>().len() > 2 => numbers,
+        _ => {
+            let ids: Vec<&str> = players
+                .iter()
+                .map(|p| p.team.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            if ids.len() <= 2 {
+                return;
+            }
+            players
+                .iter()
+                .map(|p| ids.partition_point(|id| *id < p.team.as_str()) as u32 + 1)
+                .collect()
+        }
+    };
+    for (player, group) in players.iter_mut().zip(groups) {
+        player.group = Some(group);
+    }
 }
 
 // --- pregame ----------------------------------------------------------------
@@ -296,6 +338,61 @@ mod tests {
         assert_eq!(data.players[0].selection_state, None);
     }
 
+    fn groups_of(players: Vec<Value>) -> Vec<Option<u32>> {
+        let data = extract_coregame(json!({ "Players": players }), "p1").unwrap();
+        data.players.iter().map(|p| p.group).collect()
+    }
+
+    #[test]
+    fn duo_mode_groups_by_team_number_not_team_id() {
+        // 8 duos: TeamNumber is the duo, TeamID only a lopsided Blue/Red split.
+        let players = (1..=16u32)
+            .map(|i| {
+                let duo = i.div_ceil(2);
+                let team = if duo == 2 { "Red" } else { "Blue" };
+                json!({ "Subject": format!("p{i}"), "TeamID": team, "TeamNumber": duo })
+            })
+            .collect();
+        let expected: Vec<Option<u32>> = (1..=16u32).map(|i| Some(i.div_ceil(2))).collect();
+        assert_eq!(groups_of(players), expected);
+    }
+
+    #[test]
+    fn free_for_all_groups_by_sorted_team_id_ordinal() {
+        let players = ["c", "a", "b"]
+            .iter()
+            .enumerate()
+            .map(|(i, team)| json!({ "Subject": format!("p{}", i + 1), "TeamID": team }))
+            .collect();
+        assert_eq!(groups_of(players), vec![Some(3), Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn two_team_rosters_get_no_groups() {
+        let five_v_five = |with_team_number: bool| -> Vec<Value> {
+            (1..=10)
+                .map(|i| {
+                    let (team, number) = if i <= 5 { ("Blue", 1) } else { ("Red", 2) };
+                    let mut player = json!({ "Subject": format!("p{i}"), "TeamID": team });
+                    if with_team_number {
+                        player["TeamNumber"] = json!(number);
+                    }
+                    player
+                })
+                .collect()
+        };
+        assert!(groups_of(five_v_five(false)).iter().all(Option::is_none));
+        assert!(groups_of(five_v_five(true)).iter().all(Option::is_none));
+        // TeamNumber on only some players is not a usable grouping, and two TeamIDs are
+        // the ordinary ally/enemy split.
+        let partial = vec![
+            json!({ "Subject": "p1", "TeamID": "Blue", "TeamNumber": 1 }),
+            json!({ "Subject": "p2", "TeamID": "Blue", "TeamNumber": 2 }),
+            json!({ "Subject": "p3", "TeamID": "Red" }),
+        ];
+        assert!(groups_of(partial).iter().all(Option::is_none));
+    }
+
     #[test]
     fn coregame_missing_own_puuid_has_no_own_team() {
         let payload = json!({ "Players": [ { "Subject": "x", "TeamID": "Red" } ] });
@@ -374,6 +471,7 @@ mod tests {
             account_level: 0,
             incognito: false,
             hide_account_level: false,
+            group: None,
         }
     }
 

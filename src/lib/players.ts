@@ -28,6 +28,11 @@ export function splitTeams(players: PlayerRow[]): { allies: PlayerRow[]; enemies
   return { allies, enemies };
 }
 
+/** A multi-team mode (more than two sides): the table is one flat list, not ally/enemy. */
+export function isMultiTeam(players: PlayerRow[]): boolean {
+  return players.some((player) => player.group != null);
+}
+
 export interface PartyMark {
   color: string;
   size: number;

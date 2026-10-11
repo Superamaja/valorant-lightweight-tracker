@@ -252,6 +252,12 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    match payload's `GamePodID` at zero extra requests; snapshot gained `server` + `region`
    (`docs/ipc-contract.md`). Most city tokens are inferred, pending confirmation via
    `pnpm snapshot`'s `pods.json` (list in `docs/data-sources.md` "Game server labels").
+   Multi-team grouping added: a coregame roster with more than two sides (Gauntlet: Glitched
+   is 8 duos keyed by `TeamNumber`, its `TeamID` only a 14/2 Blue/Red split) now gets a
+   per-row `group`, allies are the own group, and the UI shows one flat "Players" list with a
+   group number per row (`docs/backend-spec.md` §5 "Multi-team rosters"). Deathmatch is
+   assumed to take the distinct-`TeamID` branch but is unverified until a `pnpm snapshot`
+   capture of it exists.
 11. **Session todo list (2026-08-26, remaining):**
    - UI-review findings rejected by user (do not revisit): pip opacity/half-height rework,
      numeric right-alignment, empty-cell dash unification, last-match table dimming,

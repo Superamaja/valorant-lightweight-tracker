@@ -188,6 +188,20 @@ Players: [
 ```
 Own team = the `TeamID` where `Subject == own_puuid`.
 
+**Multi-team rosters** (`match_state::assign_groups`, coregame only; pregame is allies-only and
+never grouped). Some modes have more than two sides. Live capture of Gauntlet: Glitched
+(`abilitydraftarena`): 16 players, each with an integer `TeamNumber` 1..8 (two per number, the
+duo), while `TeamID` is just `Blue` x14 / `Red` x2 and means nothing for grouping. Rule:
+1. every player carries a `TeamNumber` and there are more than 2 distinct values -> group by
+   `TeamNumber`;
+2. else more than 2 distinct `TeamID`s -> group by `TeamID`, numbered 1.. in sorted id order;
+3. else no groups: the ordinary two-team behaviour, unchanged (a `TeamNumber` in a 5v5 payload
+   is ignored).
+A grouped roster sets `PlayerRow.group`, `is_ally` = same group as the local player, and
+`order_rows` puts the own group first (self first), then the other groups ascending. An
+unreadable `TeamNumber` counts as absent. Deathmatch is expected to hit rule 2 (one player per
+team) but no capture confirms its shape yet; check with `pnpm snapshot`.
+
 Game server: `constants::game_server_name` reads the last dot-separated segment of `GamePodID`
 as `<region>-gp-<city>[-awsedge]-<n>` and maps `<city>` to the in-game server picker's label
 (table + confirmed/inferred tokens in `docs/data-sources.md`); an unknown city is title-cased,
@@ -562,6 +576,8 @@ serde camelCase names are in `docs/ipc-contract.md`.
   by display name (case-insensitive, hidden/unresolved names last) tie-broken by puuid. The UI
   colours by `is_ally` only and must not re-sort or read the raw Red/Blue `team` id as a
   colour. Implemented in `assemble::order_rows`, contract documented in `ipc-contract.md`.
+  Multi-team modes (§5 "Multi-team rosters") slot the other groups in ascending `group`
+  order after the own group.
 
 **Request-count math at match start (10 players, all uncached, INGAME):** unchanged phase-1
 core (1 coregame players-id + 1 coregame match + 1 name-service batch + 10 MMR) **plus phase

@@ -53,6 +53,13 @@ so a fresh clone on another machine has live-shaped data to test against. It hol
 Riot IDs from that lobby (kept deliberately). Load it the same way as the preview fixture,
 copying it to `public/debug-snapshot.json`.
 
+### Multi-team fixture
+
+`docs/fixtures/multiteam-snapshot.json` is a hand-made Gauntlet: Glitched lobby: 16 players
+(`Player 1`..`Player 16`, fake ids) in 8 duos with `group` set, the local player in group 3
+(so the own group leads and the rest follow ascending). It previews the flat "Players" list
+and the per-row group labels. Load it the same way.
+
 then open <http://localhost:1420/>. To go back, move `_debug-snapshot.json` back over
 `debug-snapshot.json` (or delete it for live data).
 
