@@ -77,6 +77,7 @@ pub fn game_mode_name(queue_id: &str) -> String {
         "valaram" => "All Random One Site",
         "dodgeball" => "Knockout",
         "fortcollins" => "Retake",
+        "abilitydraftarena" => "Gauntlet: Glitched",
         "" => "Custom",
         other => {
             vlt_log!("state", "unknown queue id {other}");
@@ -162,6 +163,7 @@ mod tests {
     fn known_queue_ids_map_to_display_names() {
         assert_eq!(game_mode_name("competitive"), "Competitive");
         assert_eq!(game_mode_name("fortcollins"), "Retake");
+        assert_eq!(game_mode_name("abilitydraftarena"), "Gauntlet: Glitched");
         assert_eq!(game_mode_name(""), "Custom");
     }
 

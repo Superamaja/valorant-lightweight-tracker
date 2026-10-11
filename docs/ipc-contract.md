@@ -285,7 +285,7 @@ interface RankInfo {
   only for debugging, and does not correspond to the ally/enemy split.
 - **`mode`** is one of: `Competitive`, `Unrated`, `Swiftplay`, `Spike Rush`, `Deathmatch`,
   `Escalation`, `Replication`, `Team Deathmatch`, `Custom`, `Snowball Fight`,
-  `All Random One Site`, `Knockout`, `New Map`, or `Custom Game` (customs). Unknown queue ids
+  `All Random One Site`, `Knockout`, `New Map`, `Gauntlet: Glitched`, or `Custom Game` (customs). Unknown queue ids
   pass through as their raw string.
 - **`name` = null** when `incognito` is true (except for your own row) or the name-service did
   not return a name. Always guard for null and render a placeholder.
