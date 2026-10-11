@@ -28,6 +28,7 @@ dist-ssr
 /public/_debug-snapshot.json
 /debug/
 /src-tauri/debug/
+/captures/
 
 # Rust / Tauri build output (also covered by src-tauri/.gitignore)
 src-tauri/target

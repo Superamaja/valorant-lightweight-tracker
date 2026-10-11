@@ -122,6 +122,41 @@ above still compiled in, plus devtools (Ctrl+Shift+I). Run it from a terminal to
 console log without `pnpm tauri dev`; it is also the artifact for the release-shaped CSP smoke
 test (see roadmap).
 
+## Raw API snapshot (no build needed)
+
+`scripts/snapshot.mjs` dumps the raw Riot API payloads for whatever state the game is in right
+now (menus, agent select or in game). It is plain Node with no dependencies and no Rust build, so
+it is the first step when a payload needs inspecting, e.g. when adding a new game mode:
+
+```
+pnpm snapshot
+pnpm snapshot --match-details
+```
+
+It reads the lockfile and builds its requests the way `src-tauri/src/riot/` does (same headers,
+region to shard mapping, client version from own presence with valorant-api.com as fallback),
+makes one request per endpoint, and writes each response as pretty JSON to
+`captures/<UTC timestamp>_<state>/`:
+
+- `region-locale.json`, `presences.json` (raw) and `own-presence-decoded.json` (own `private`
+  blob, base64 decoded);
+- `pregame-player.json` + `pregame-match.json` in agent select, or `coregame-player.json` +
+  `coregame-match.json` + `coregame-loadouts.json` in game (with no readable presence state, both
+  lookups are tried and the one that answers decides the state);
+- `party-player.json` + `party.json`, `mmr.json`, `competitive-updates.json`;
+- with `--match-details`: `match-details.json` for the current match (only exists once it has
+  ended), or outside a match for the last played one (`match-history.json`, any queue);
+- `manifest.json`: every request with its path, status and error, plus every endpoint skipped
+  for the current state. A failed request never stops the run.
+
+The console prints one line per file (ids cut to 8 characters) and then the detected
+`sessionLoopState`, `queueId`, `provisioningFlow`, `partyState`, mode id and map id, which is what
+identifies a new mode. It exits non-zero when the lockfile is missing (game not running).
+
+The lockfile password and the access/entitlements tokens are never written or printed, but the
+captures hold real puuids, player names and match payloads. `captures/` is gitignored; do not
+share them.
+
 ## Diagnostics report (all builds)
 
 The release counterpart of the console log above, and the only one users have. `Copy diagnostics`

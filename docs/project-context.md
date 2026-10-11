@@ -328,6 +328,7 @@ Frontend styling uses Tailwind CSS v4 via the Vite plugin (`@tailwindcss/vite`) 
 - `pnpm tauri build` — produce a release build + installer.
 - `pnpm build` — frontend-only typecheck (`tsc`) + Vite production build (output in `dist/`).
 - `cd src-tauri && cargo check` — typecheck the Rust side.
+- `pnpm snapshot` — dump raw Riot API payloads for the current game state to `captures/` (no build needed; see `docs/testing.md`).
 - Working on the UI without a live match, or capturing real snapshots to replay: see
   `docs/testing.md` (dev-only, absent from release builds).
 
