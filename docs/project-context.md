@@ -255,8 +255,9 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
    inferred (list in `docs/data-sources.md` "Game server labels").
    Multi-team grouping added: a coregame roster with more than two sides (Gauntlet: Glitched
    is 8 duos keyed by `TeamNumber`, its `TeamID` only a 14/2 Blue/Red split) now gets a
-   per-row `group`, allies are the own group, and the UI shows one flat "Players" list with a
-   group number per row (`docs/backend-spec.md` §5 "Multi-team rosters"). Deathmatch is
+   per-row `group`, allies are the own group, and the UI shows one flat "Players" list,
+   partners adjacent (`docs/backend-spec.md` §5 "Multi-team rosters"). A per-row group number
+   was tried and removed (2026-10-12): adjacency plus the team-tinted portraits carry it. Deathmatch is
    assumed to take the distinct-`TeamID` branch but is unverified until a `pnpm snapshot`
    capture of it exists. Two Gauntlet captures show `TeamID` is `Red` for `TeamNumber` 2 and
    `Blue` for every other team regardless of where self sits, so a "current opponent"

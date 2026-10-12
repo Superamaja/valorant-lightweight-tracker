@@ -28,15 +28,6 @@ function PartyBar({ mark }: { mark: PartyMark | undefined }) {
   );
 }
 
-/** Multi-team modes: the player's side number, so partners read as a pair. */
-function GroupLabel({ group }: { group: number | null | undefined }) {
-  return (
-    <Tooltip content={`Team ${group}`}>
-      <span className="block text-center text-[10px] tabular-nums text-neutral-500">{group}</span>
-    </Tooltip>
-  );
-}
-
 /** One player. Cells are rendered in the column order defined by `lib/table.ts`. */
 export function PlayerRow({
   player,
@@ -62,7 +53,6 @@ export function PlayerRow({
         player.isSelf ? "bg-white/[0.04] ring-1 ring-white/10 ring-inset" : ""
       }`}
     >
-      {layout.withGroups && <GroupLabel group={player.group} />}
       <PartyBar mark={player.partyId ? layout.parties.get(player.partyId) : undefined} />
       <AgentCell
         agent={player.agent}

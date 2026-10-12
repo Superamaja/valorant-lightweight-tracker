@@ -292,7 +292,7 @@ interface RankInfo {
   Render rows in array order. **Colour by `isAlly` only** (ally block = blue, enemy = red);
   do not read the raw `team` id for colour — it is Riot's internal Red/Blue label, exposed
   only for debugging, and does not correspond to the ally/enemy split. `group` is for
-  labelling and the flat-list layout only, never for colour. Snapshots captured before the
+  the flat-list layout and the draft-agent portrait tint only, never for row colour. Snapshots captured before the
   field existed lack it; treat that as `null`.
 - **`mode`** is one of: `Competitive`, `Unrated`, `Swiftplay`, `Spike Rush`, `Deathmatch`,
   `Escalation`, `Replication`, `Team Deathmatch`, `Custom`, `Snowball Fight`,

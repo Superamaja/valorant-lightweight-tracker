@@ -10,7 +10,7 @@ function Legend({ layout }: { layout: TableLayout }) {
       style={{ gridTemplateColumns: layout.template }}
       className={`${ROW_GRID} border-l-transparent pb-1 text-[9px] font-medium tracking-[0.14em] text-neutral-600 uppercase`}
     >
-      {visibleColumns(layout.withSkins, layout.withGroups).map((column) => (
+      {visibleColumns(layout.withSkins).map((column) => (
         <Tooltip key={column.key} content={column.hint}>
           <span className={column.left ? "" : "text-center"}>{column.label}</span>
         </Tooltip>
@@ -26,16 +26,14 @@ function Legend({ layout }: { layout: TableLayout }) {
 export function PlayerTable({ snapshot }: { snapshot: TrackerSnapshot }) {
   const pregame = snapshot.status === "Pregame";
   const withSkins = snapshot.status === "Ingame";
-  const withGroups = isMultiTeam(snapshot.players);
 
   const layout: TableLayout = {
-    template: gridTemplate(withSkins, withGroups),
+    template: gridTemplate(withSkins),
     withSkins,
-    withGroups,
     parties: partyGroups(snapshot.players),
   };
 
-  if (withGroups) {
+  if (isMultiTeam(snapshot.players)) {
     return (
       <div className="min-w-fit px-4 pt-2 pb-3">
         <Legend layout={layout} />
