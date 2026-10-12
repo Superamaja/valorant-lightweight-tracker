@@ -191,7 +191,9 @@ Own team = the `TeamID` where `Subject == own_puuid`.
 **Multi-team rosters** (`match_state::assign_groups`, coregame only; pregame is allies-only and
 never grouped). Some modes have more than two sides. Live capture of Gauntlet: Glitched
 (`abilitydraftarena`): 16 players, each with an integer `TeamNumber` 1..8 (two per number, the
-duo), while `TeamID` is just `Blue` x14 / `Red` x2 and means nothing for grouping. Rule:
+duo), while `TeamID` is just `Blue` x14 / `Red` x2 and means nothing for grouping. Two
+captures (self on team 7, then team 1) both had `Red` on `TeamNumber` 2 and `Blue` on every
+other team, so `TeamID` is fixed to team 2 and cannot identify the current round's opponent. Rule:
 1. every player carries a `TeamNumber` and there are more than 2 distinct values -> group by
    `TeamNumber`;
 2. else more than 2 distinct `TeamID`s -> group by `TeamID`, numbered 1.. in sorted id order;

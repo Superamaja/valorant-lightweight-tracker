@@ -250,14 +250,17 @@ A lightweight Windows desktop app with a good UI that shows an in-match player t
 11i. **v0.1.5 in progress (2026-10-11).** Server label added: the header's mode line now reads
    `<mode> · <server>` (e.g. `Gauntlet: Glitched · US West (N. California)`), parsed from the
    match payload's `GamePodID` at zero extra requests; snapshot gained `server` + `region`
-   (`docs/ipc-contract.md`). Most city tokens are inferred, pending confirmation via
-   `pnpm snapshot`'s `pods.json` (list in `docs/data-sources.md` "Game server labels").
+   (`docs/ipc-contract.md`). All six NA city tokens are now confirmed from a live `pods.json`
+   capture (2026-10-12; pod instance numbers can be `-2`); the remaining non-NA tokens stay
+   inferred (list in `docs/data-sources.md` "Game server labels").
    Multi-team grouping added: a coregame roster with more than two sides (Gauntlet: Glitched
    is 8 duos keyed by `TeamNumber`, its `TeamID` only a 14/2 Blue/Red split) now gets a
    per-row `group`, allies are the own group, and the UI shows one flat "Players" list with a
    group number per row (`docs/backend-spec.md` §5 "Multi-team rosters"). Deathmatch is
    assumed to take the distinct-`TeamID` branch but is unverified until a `pnpm snapshot`
-   capture of it exists.
+   capture of it exists. Two Gauntlet captures show `TeamID` is `Red` for `TeamNumber` 2 and
+   `Blue` for every other team regardless of where self sits, so a "current opponent"
+   highlight cannot be derived from `TeamID`.
    Draft agent: Gauntlet: Glitched puts every player on one non-playable valorant-api agent
    ("KAY/O", `AbilityDraftAgent`), which the old playable-only agents fetch dropped (portrait
    "?"). Static data now keeps non-playable agents flagged (`AgentInfo.playable`, static schema

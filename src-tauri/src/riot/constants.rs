@@ -240,6 +240,10 @@ mod tests {
             Some("US West (N. California)")
         );
         assert_eq!(
+            game_server_name("aresriot.aws-chi2-prod.na-gp-chicago-2").as_deref(),
+            Some("US Central (Illinois)")
+        );
+        assert_eq!(
             game_server_name("aresriot.aws-rclusterprod-apne1-1.ap-gp-tokyo-1").as_deref(),
             Some("Tokyo")
         );

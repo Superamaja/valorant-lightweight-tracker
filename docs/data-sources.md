@@ -14,10 +14,14 @@ The header's server label comes from the match `GamePodID` (city token mapped in
 per Riot Support "Server Select":
 https://support-valorant.riotgames.com/hc/en-us/articles/360055678634-Server-Select
 
-- **Confirmed pod tokens** (seen in real pod ids): `norcal` (live capture
-  `aresriot.aws-usw1-prod.na-gp-norcal-1`), `hongkong`, `tokyo`, `singapore`, `sydney`, `mumbai`.
-- **Inferred tokens** (label from Riot, token guessed): `oregon`, `ashburn`, `dallas`, `chicago`,
-  `atlanta`, `santiago`, `mexicocity`, `miami`, `saopaulo`, `frankfurt`, `paris`, `stockholm`,
+- **Confirmed pod tokens** (seen in real pod ids): all six NA tokens `norcal`, `oregon`,
+  `ashburn`, `dallas`, `chicago`, `atlanta` (live `pods.json` capture on the NA shard,
+  2026-10-12: `aresriot.aws-atl2-prod.na-gp-atlanta-2`, `aresriot.aws-chi2-prod.na-gp-chicago-2`,
+  `aresriot.aws-dfw2-prod.na-gp-dallas-2`, `aresriot.aws-use1-prod.na-gp-ashburn-1`,
+  `aresriot.aws-usw1-prod.na-gp-norcal-1`, `aresriot.aws-usw2-prod.na-gp-oregon-1`), plus
+  `hongkong`, `tokyo`, `singapore`, `sydney`, `mumbai`. The trailing instance number is not
+  always `1` (`-2` occurs); the parser accepts any digits.
+- **Inferred tokens** (label from Riot, token guessed): `santiago`, `mexicocity`, `miami`, `saopaulo`, `frankfurt`, `paris`, `stockholm`,
   `istanbul`, `london`, `warsaw`, `madrid`, `bahrain`, `seoul`, `manila`. An unmatched token shows
   title-cased, so a wrong guess degrades to a readable city name. Confirm them from the
   `GamePodPingServiceInfo` keys in `pnpm snapshot`'s `pods.json` (one capture per region).
